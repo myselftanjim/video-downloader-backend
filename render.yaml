@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: clipnest-personal-video-tool
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: MAX_DOWNLOAD_MB
+        value: "400"
