@@ -42,6 +42,15 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
     </div>
     <div class="hint">Use a public link for content you own or have permission to save. Availability depends on the source platform.</div>
   </form>
+  <section class="section" id="uploadSection" style="border-top:1px solid #2a3041;margin-top:20px;padding-top:18px">
+    <h3 class="section-title" style="margin-bottom:6px">Or upload a video from your device</h3>
+    <p class="hint" style="margin-bottom:12px">Useful when a social platform blocks server downloads. Upload a video you own or have permission to use (MP4, MOV, MKV, WebM, AVI; up to 90 MB).</p>
+    <div class="urlrow">
+      <input id="localFile" class="field" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,.m4v,.mpeg,.mpg,.3gp,video/*">
+      <button id="uploadBtn" class="btn secondary" type="button">Upload & inspect ↑</button>
+    </div>
+    <p class="hint">Uploaded files are temporary and are deleted after download or expiry.</p>
+  </section>
   <section id="mediaInfo" class="section hidden">
     <div class="rowlabel"><h3 id="videoTitle" class="section-title" style="font-size:16px;margin:0 0 5px"></h3><span id="source" class="small"></span></div>
     <div class="small">Duration: <strong id="duration">—</strong></div>
@@ -69,7 +78,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
 <script>
 (function(){
 "use strict";
-var currentInfo=null, currentJob=null, pollHandle=null;
+var currentInfo=null, currentJob=null, pollHandle=null, mediaSource="url", uploadedMediaId=null;
 var el=function(id){return document.getElementById(id)};
 async function api(url, options){
   var response;
@@ -101,33 +110,52 @@ el("loginForm").addEventListener("submit",async function(ev){
  catch(e){setMsg("loginMsg",e.message,"error")}
  finally{el("loginBtn").disabled=false}
 });
+function showMediaInfo(info){
+  currentInfo=info;
+  el("videoTitle").textContent=info.title;
+  el("source").textContent=info.source;
+  el("duration").textContent=info.duration_text;
+  var quality=el("quality");quality.replaceChildren();
+  (info.qualities||[]).forEach(function(q){var opt=document.createElement("option");opt.value=String(q);opt.textContent=q+"p";quality.appendChild(opt)});
+  var best=document.createElement("option");best.value="best";best.textContent="Best available";quality.insertBefore(best,quality.firstChild);quality.value="best";
+  el("trimStart").value="0";el("trimEnd").value=String(Math.min(info.duration||10,30));el("trimEnabled").checked=false;
+  el("mediaInfo").classList.remove("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");updateFormat();
+}
 el("infoForm").addEventListener("submit",async function(ev){
  ev.preventDefault();var link=el("url").value.trim();if(!link)return;
  el("inspectBtn").disabled=true;el("mediaInfo").classList.add("hidden");setMsg("appMsg","Reading video information…");
  try{
-  currentInfo=await api("/api/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:link})});
-  el("videoTitle").textContent=currentInfo.title;
-  el("source").textContent=currentInfo.source;
-  el("duration").textContent=currentInfo.duration_text;
-  var quality=el("quality");quality.replaceChildren();
-  (currentInfo.qualities||[]).forEach(function(q){var opt=document.createElement("option");opt.value=String(q);opt.textContent=q+"p";quality.appendChild(opt)});
-  var best=document.createElement("option");best.value="best";best.textContent="Best available";quality.insertBefore(best,quality.firstChild);quality.value="best";
-  el("trimStart").value="0";el("trimEnd").value=String(Math.min(currentInfo.duration||10,30));el("trimEnabled").checked=false;
-  el("mediaInfo").classList.remove("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");updateFormat();
-  setMsg("appMsg",currentInfo.trim_allowed?"Video found. Trimming is available.":"Video found. Trim is hidden because duration is under 10 minutes (or unavailable).","success");
+  mediaSource="url";uploadedMediaId=null;
+  var info=await api("/api/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:link})});
+  showMediaInfo(info);
+  setMsg("appMsg",info.trim_allowed?"Video found. Trimming is available.":"Video found. Trim is hidden because duration is under 10 minutes (or unavailable).","success");
  }catch(e){currentInfo=null;setMsg("appMsg",e.message,"error")}
  finally{el("inspectBtn").disabled=false}
+});
+el("uploadBtn").addEventListener("click",async function(){
+ var file=el("localFile").files[0];
+ if(!file){setMsg("appMsg","আগে একটি ভিডিও ফাইল নির্বাচন করো।","error");return}
+ el("uploadBtn").disabled=true;el("mediaInfo").classList.add("hidden");setMsg("appMsg","Uploading and inspecting video…");
+ try{
+  var form=new FormData();form.append("file",file);
+  var info=await api("/api/upload",{method:"POST",body:form});
+  mediaSource="upload";uploadedMediaId=info.media_id;showMediaInfo(info);
+  setMsg("appMsg","Video uploaded temporarily. Trim, convert or download below.","success");
+ }catch(e){currentInfo=null;setMsg("appMsg",e.message,"error")}
+ finally{el("uploadBtn").disabled=false}
 });
 el("format").addEventListener("change",updateFormat);
 el("downloadBtn").addEventListener("click",async function(){
  if(!currentInfo)return;
  el("downloadBtn").disabled=true;el("downloadWrap").classList.add("hidden");el("statusPct").textContent="0%";el("progress").style.width="0%";showStatus("Starting…");
- var payload={url:el("url").value.trim(),quality:el("quality").value,output_format:el("format").value};
+ var payload={quality:el("quality").value,output_format:el("format").value};
+ if(mediaSource==="upload"){payload.media_id=uploadedMediaId;}else{payload.url=el("url").value.trim();}
  if(el("trimEnabled").checked&&el("trimSection").classList.contains("active")){
   payload.trim_start=Number(el("trimStart").value);payload.trim_end=Number(el("trimEnd").value);
  }
  try{
-  var data=await api("/api/download",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  var endpoint=mediaSource==="upload"?"/api/convert":"/api/download";
+  var data=await api(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
   currentJob=data.job_id;pollJob();
  }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
 });
@@ -145,7 +173,7 @@ async function pollJob(){
  }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
 }
 el("downloadLink").addEventListener("click",function(){setTimeout(function(){el("downloadWrap").classList.add("hidden");currentJob=null},4000)});
-el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("trimEnabled").checked=false;el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
+el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("localFile").value="";el("trimEnabled").checked=false;el("mediaInfo").classList.add("hidden");mediaSource="url";uploadedMediaId=null;el("statusBox").classList.remove("show");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
 el("logoutBtn").addEventListener("click",async function(){try{await api("/api/logout",{method:"POST"})}catch(e){}currentInfo=null;currentJob=null;setAuth(false)});
 checkSession();
 })();
