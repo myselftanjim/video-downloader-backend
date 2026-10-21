@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#10131b">
+<title>ClipNest — Personal Video Tool</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0d14;--panel:#141824;--line:#293044;--muted:#9ca6ba;--text:#f5f7ff;--accent:#8b5cf6;--cyan:#21d4fd;--good:#72e6ad;--bad:#ff8294}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(900px 460px at 18% -8%,#34216b66,transparent 60%),radial-gradient(850px 500px at 98% 6%,#064c6960,transparent 55%),var(--bg)}
+button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.wrap{width:min(920px,calc(100% - 32px));margin:0 auto;padding:30px 0 44px}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:42px}.brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:20px;letter-spacing:-.04em}.logo{height:42px;width:42px;border-radius:14px;display:grid;place-items:center;background:linear-gradient(135deg,var(--accent),var(--cyan));box-shadow:0 8px 26px #5f56dd45;font-size:20px}.pill{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid #294b45;background:#10251f;color:var(--good);border-radius:999px;font-size:12px;font-weight:650}.dot{width:7px;height:7px;border-radius:50%;background:currentColor}.hero{text-align:center;max-width:690px;margin:0 auto 30px}.eyebrow{color:#aab5ff;text-transform:uppercase;letter-spacing:.16em;font-weight:750;font-size:11px}.hero h1{font-size:clamp(33px,6.5vw,58px);line-height:1.05;letter-spacing:-.055em;margin:14px 0 16px}.gradient{background:linear-gradient(95deg,#c1a6ff,#6ee7f9);-webkit-background-clip:text;background-clip:text;color:transparent}.hero p{margin:0 auto;color:var(--muted);max-width:555px;font-size:16px}.panel{border:1px solid #30364a;background:linear-gradient(140deg,#171b29f2,#11151ff5);border-radius:24px;box-shadow:0 26px 70px #0005;padding:clamp(18px,4vw,30px)}.label{display:block;color:#cbd3e4;font-size:13px;font-weight:650;margin:0 0 9px}.urlrow{display:flex;gap:10px}.urlrow input{min-width:0;flex:1}.field{width:100%;border:1px solid #343c51;background:#0d111a;color:var(--text);border-radius:12px;padding:13px 14px;outline:none}.field:focus{border-color:#8b79ef;box-shadow:0 0 0 3px #8b5cf626}.btn{border:0;border-radius:12px;padding:13px 17px;font-weight:750;color:#fff;background:linear-gradient(100deg,#7657ed,#286edb);box-shadow:0 7px 20px #5b59dd27;white-space:nowrap}.btn.secondary{background:#252c3e;border:1px solid #3b435a;box-shadow:none}.btn.ghost{background:transparent;border:1px solid var(--line);box-shadow:none;color:#d3d9e8}.hint{font-size:12px;color:var(--muted);margin:9px 2px 0}.section{border-top:1px solid #2a3041;margin-top:24px;padding-top:22px}.section-title{font-size:13px;font-weight:800;letter-spacing:.02em;margin:0 0 14px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.option select,.option input{margin-top:0}.rowlabel{display:flex;justify-content:space-between;gap:12px}.field-note{font-size:12px;color:var(--muted);font-weight:450}.trim{display:none}.trim.active{display:block}.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:22px}.actions .btn{flex:1}.status{display:none;margin-top:18px;border:1px solid #353d51;background:#0d121c;border-radius:14px;padding:15px}.status.show{display:block}.statusline{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}.bar{height:7px;background:#242a3a;border-radius:99px;overflow:hidden;margin-top:13px}.bar span{display:block;width:0;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--cyan));transition:width .25s}.error{color:var(--bad)}.success{color:var(--good)}.small{font-size:12px;color:var(--muted)}.login{max-width:440px;margin:25px auto}.login h2{margin:0 0 8px;letter-spacing:-.03em}.login p{color:var(--muted);font-size:13px;margin:0 0 18px}.login .field{margin-bottom:12px}.footer{display:flex;justify-content:space-between;gap:20px;color:#7d879d;font-size:12px;padding:18px 4px 0}.hidden{display:none!important}.platforms{display:flex;justify-content:center;gap:7px;flex-wrap:wrap;margin-top:20px}.platforms span{padding:6px 10px;border:1px solid #2b3042;border-radius:999px;color:#b3bdce;font-size:11px}.warn{color:#bdc5d5;border-left:2px solid #9a80ff;padding-left:11px;font-size:12px;margin-top:16px}
+@media(max-width:600px){.wrap{width:min(100% - 20px,920px);padding-top:18px}.top{margin-bottom:35px}.pill{font-size:10px}.grid{grid-template-columns:1fr}.urlrow{flex-direction:column}.urlrow .btn{width:100%}.hero p{font-size:14px}.footer{flex-direction:column;gap:6px}.actions .btn{flex:1 1 100%}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div class="brand"><div class="logo">▶</div><span>ClipNest</span></div>
+  <div class="pill"><span class="dot"></span> Personal workspace</div>
+</header>
+<section class="hero">
+  <div class="eyebrow">Your private media toolkit</div>
+  <h1>Videos in.<br><span class="gradient">Your format out.</span></h1>
+  <p>Choose an accessible video link, select a format and quality, then download. Made for your phone, tablet and computer.</p>
+  <div class="platforms"><span>YouTube</span><span>Facebook</span><span>Instagram</span><span>TikTok</span><span>MP4 · MP3</span></div>
+</section>
+<section id="loginCard" class="panel login">
+  <h2>Welcome back</h2><p>Enter your family's shared access code to open ClipNest.</p>
+  <form id="loginForm">
+    <label class="label" for="password">Access code</label>
+    <input id="password" class="field" type="password" autocomplete="current-password" maxlength="200" placeholder="Enter access code" required>
+    <button id="loginBtn" class="btn" style="width:100%" type="submit">Unlock workspace</button>
+  </form>
+  <div id="loginMsg" class="small" role="status" style="margin-top:12px"></div>
+</section>
+<main id="appCard" class="panel hidden">
+  <form id="infoForm">
+    <label class="label" for="url">Paste a video link</label>
+    <div class="urlrow">
+      <input id="url" class="field" type="url" inputmode="url" autocomplete="url" placeholder="https://..." maxlength="2048" required>
+      <button id="inspectBtn" class="btn" type="submit">Find qualities <span aria-hidden="true">→</span></button>
+    </div>
+    <div class="hint">Use a public link for content you own or have permission to save. Availability depends on the source platform.</div>
+  </form>
+  <section id="mediaInfo" class="section hidden">
+    <div class="rowlabel"><h3 id="videoTitle" class="section-title" style="font-size:16px;margin:0 0 5px"></h3><span id="source" class="small"></span></div>
+    <div class="small">Duration: <strong id="duration">—</strong></div>
+    <div class="grid" style="margin-top:18px">
+      <div class="option"><label class="label" for="format">Output format</label><select id="format" class="field"><option value="mp4">MP4 video</option><option value="mp3">MP3 audio</option></select></div>
+      <div id="qualityWrap" class="option"><label class="label" for="quality">Video quality</label><select id="quality" class="field"></select></div>
+    </div>
+    <section id="trimSection" class="section trim">
+      <div class="rowlabel"><h3 class="section-title">Trim video</h3><span class="field-note">Available from 10:00</span></div>
+      <div class="grid">
+        <div class="option"><label class="label" for="trimStart">Start (seconds)</label><input id="trimStart" class="field" type="number" min="0" step="0.1" value="0"></div>
+        <div class="option"><label class="label" for="trimEnd">End (seconds)</label><input id="trimEnd" class="field" type="number" min="1" step="0.1" value="10"></div>
+      </div>
+      <p class="hint">Choose the section to export. Precise trimming may re-encode the media.</p>
+    </section>
+    <div class="actions"><button id="downloadBtn" type="button" class="btn">Prepare download <span aria-hidden="true">↓</span></button><button id="resetBtn" type="button" class="btn ghost">New link</button></div>
+    <div id="statusBox" class="status" role="status" aria-live="polite"><div class="statusline"><span id="statusText">Ready</span><strong id="statusPct">0%</strong></div><div class="bar"><span id="progress"></span></div><div id="downloadWrap" class="hidden" style="margin-top:14px"><a id="downloadLink" class="btn" href="#" style="display:block;text-align:center;text-decoration:none">Download file</a><p class="small">The temporary server copy is removed after download or within 30 minutes.</p></div></div>
+    <p class="warn">ClipNest cannot guarantee every social link will work. It does not bypass DRM, login restrictions or platform download controls. Large videos may exceed the free server's limits.</p>
+  </section>
+  <div class="footer"><span>One processing job at a time</span><button id="logoutBtn" class="btn ghost" type="button" style="padding:6px 10px;font-size:12px">Log out</button></div>
+  <div id="appMsg" class="small" role="status" style="margin-top:12px"></div>
+</main>
+<footer class="footer"><span>ClipNest · Personal use</span><span>Temporary processing · No permanent media library</span></footer>
+</div>
+<script>
+(function(){
+"use strict";
+var currentInfo=null, currentJob=null, pollHandle=null;
+var el=function(id){return document.getElementById(id)};
+async function api(url, options){
+  var response;
+  try{
+    response=await fetch(url,Object.assign({credentials:"same-origin"},options||{}));
+  }catch(e){throw new Error("Network connection failed. Try again.");}
+  var data={};
+  try{data=await response.json()}catch(e){}
+  if(!response.ok)throw new Error(data.detail||data.error||("Request failed ("+response.status+")"));
+  return data;
+}
+function setMsg(id,message,type){var n=el(id);n.textContent=message||"";n.className=type==="error"?"small error":type==="success"?"small success":"small"}
+function setAuth(yes){el("loginCard").classList.toggle("hidden",yes);el("appCard").classList.toggle("hidden",!yes)}
+function showStatus(message,type){el("statusBox").classList.add("show");el("statusText").textContent=message;el("statusText").className=type==="error"?"error":type==="success"?"success":""}
+function durationSeconds(){return Number(currentInfo&&currentInfo.duration||0)}
+function updateFormat(){
+ var mp3=el("format").value==="mp3";
+ el("qualityWrap").classList.toggle("hidden",mp3);
+ if(mp3){el("trimSection").classList.remove("active")}
+ else{el("trimSection").classList.toggle("active",Boolean(currentInfo&&currentInfo.trim_allowed))}
+}
+async function checkSession(){
+ try{var data=await api("/api/session");setAuth(Boolean(data.authenticated))}
+ catch(e){setAuth(false)}
+}
+el("loginForm").addEventListener("submit",async function(ev){
+ ev.preventDefault();el("loginBtn").disabled=true;setMsg("loginMsg","Checking access code…");
+ try{await api("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:el("password").value})});el("password").value="";setAuth(true);setMsg("loginMsg","");}
+ catch(e){setMsg("loginMsg",e.message,"error")}
+ finally{el("loginBtn").disabled=false}
+});
+el("infoForm").addEventListener("submit",async function(ev){
+ ev.preventDefault();var link=el("url").value.trim();if(!link)return;
+ el("inspectBtn").disabled=true;el("mediaInfo").classList.add("hidden");setMsg("appMsg","Reading video information…");
+ try{
+  currentInfo=await api("/api/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:link})});
+  el("videoTitle").textContent=currentInfo.title;
+  el("source").textContent=currentInfo.source;
+  el("duration").textContent=currentInfo.duration_text;
+  var quality=el("quality");quality.replaceChildren();
+  (currentInfo.qualities||[]).forEach(function(q){var opt=document.createElement("option");opt.value=String(q);opt.textContent=q+"p";quality.appendChild(opt)});
+  var best=document.createElement("option");best.value="best";best.textContent="Best available";quality.insertBefore(best,quality.firstChild);quality.value="best";
+  el("trimStart").value="0";el("trimEnd").value=String(Math.min(currentInfo.duration||10,30));
+  el("mediaInfo").classList.remove("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");updateFormat();
+  setMsg("appMsg",currentInfo.trim_allowed?"Video found. Trimming is available.":"Video found. Trim is hidden because duration is under 10 minutes (or unavailable).","success");
+ }catch(e){currentInfo=null;setMsg("appMsg",e.message,"error")}
+ finally{el("inspectBtn").disabled=false}
+});
+el("format").addEventListener("change",updateFormat);
+el("downloadBtn").addEventListener("click",async function(){
+ if(!currentInfo)return;
+ el("downloadBtn").disabled=true;el("downloadWrap").classList.add("hidden");el("statusPct").textContent="0%";el("progress").style.width="0%";showStatus("Starting…");
+ var payload={url:el("url").value.trim(),quality:el("quality").value,output_format:el("format").value};
+ if(el("trimSection").classList.contains("active")&&(el("trimStart").value!==""||el("trimEnd").value!=="")){
+  if(el("trimStart").value!==""||el("trimEnd").value!==String(Math.min(currentInfo.duration||10,30))){
+   payload.trim_start=Number(el("trimStart").value);payload.trim_end=Number(el("trimEnd").value);
+  }
+ }
+ try{
+  var data=await api("/api/download",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  currentJob=data.job_id;pollJob();
+ }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
+});
+async function pollJob(){
+ if(!currentJob)return;
+ try{
+  var data=await api("/api/jobs/"+encodeURIComponent(currentJob));
+  el("statusText").textContent=data.message||data.status;
+  var pct=Math.round(Number(data.progress)||0);el("statusPct").textContent=pct+"%";el("progress").style.width=pct+"%";
+  if(data.status==="completed"){
+   el("downloadLink").href=data.download_url;el("downloadLink").setAttribute("download",data.filename||"media");el("downloadLink").textContent="Download "+(data.filename||"file");el("downloadWrap").classList.remove("hidden");showStatus("Your file is ready","success");el("downloadBtn").disabled=false;return;
+  }
+  if(data.status==="failed"||data.status==="expired"){showStatus(data.message||"Processing failed","error");el("downloadBtn").disabled=false;return}
+  pollHandle=setTimeout(pollJob,1800);
+ }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
+}
+el("downloadLink").addEventListener("click",function(){setTimeout(function(){el("downloadWrap").classList.add("hidden");currentJob=null},4000)});
+el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
+el("logoutBtn").addEventListener("click",async function(){try{await api("/api/logout",{method:"POST"})}catch(e){}currentInfo=null;currentJob=null;setAuth(false)});
+checkSession();
+})();
+</script>
+</body>
+</html>
