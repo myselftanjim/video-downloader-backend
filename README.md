@@ -1,32 +1,35 @@
 # ClipNest — Personal Video Tool
 
-A password-protected video utility for personal/family use (a few people). Built with FastAPI, yt-dlp, FFmpeg and a responsive browser UI.
+A password-protected media utility for personal/family use (a few people). Built with FastAPI, yt-dlp, FFmpeg and a responsive browser UI.
 
 ## Features
 
-- Password-protected access-code login with signed, HTTP-only session cookie and basic login throttling.
-- Video metadata lookup and real source quality choices for supported public YouTube, Facebook, Instagram and TikTok URLs.
-- MP4 video download or MP3 audio extraction when the source is accessible and the user owns the media or has permission to save it.
-- Optional trimming only for videos that are at least 10 minutes long; the backend enforces this even if someone edits browser requests.
-- One active download job at a time, 15-minute processing deadline, 4-hour source-duration ceiling, and 400 MB default output cap.
-- Temporary output files; output is removed after download or after 30 minutes.
+- Password-protected access code with signed HTTP-only session cookie and basic login throttling.
+- Video metadata lookup and format/quality selection for supported public YouTube, Facebook, Instagram and TikTok URLs.
+- MP4 video and MP3 audio download for accessible sources, subject to source availability and platform rules.
+- Local video upload fallback (MP4, MOV, MKV, WebM, AVI, M4V, MPEG, MPG, 3GP) up to 90 MB, useful when a platform blocks cloud-server extraction.
+- Local upload conversion into MP4/MP3, optional resolution downscale, and Trim only when video duration is at least 10 minutes.
+- Backend-side validation of the same Trim rule, one processing job at a time, 15-minute processing deadline, 4-hour maximum duration and 400 MB output limit.
+- Temporary files removed after download or expiry; no persistent media library.
 
 ## Deploy to Render
 
-The repository includes a Dockerfile and `render.yaml` Blueprint for the Render Free web service. See [DEPLOY_BN.md](DEPLOY_BN.md) for Bengali steps.
+The repository includes a Dockerfile and `render.yaml` Blueprint for a Render Free web service. See [DEPLOY_BN.md](DEPLOY_BN.md) for Bengali steps.
 
 Required secret environment variables:
-- `APP_PASSWORD`: shared family access code; use a long unique value.
-- `SESSION_SECRET`: a long random secret for signed sessions (Render Blueprint generates this).
+- `APP_PASSWORD`: long, unique shared family access code.
+- `SESSION_SECRET`: long random secret used to sign sessions.
 
 Optional:
 - `MAX_DOWNLOAD_MB`: 50–1000, default 400.
+- `MAX_UPLOAD_MB`: 10–95, default 90.
 
-Do not commit environment secrets into Git. The Render Free service may sleep after inactivity, has limited CPU/RAM and ephemeral disk, and does not provide guaranteed 24/7 uptime.
+Never commit environment secrets to GitHub.
 
-## Limitations and responsible use
+## Known limitations
 
-- A social platform can change pages, require authentication, rate-limit requests, or disallow downloads. Not every URL is guaranteed to work.
-- This app does not bypass DRM, paywalls, login challenges, or platform access controls.
-- Use only videos you own or have permission to download. Follow each platform's terms.
-- Only MP4 and MP3 are currently implemented in the interface. Actual quality choices depend on available source formats.
+- YouTube may reject requests from shared cloud IPs with “Sign in to confirm you're not a bot.” ClipNest now displays a plain-language explanation. It does not bypass bot checks or authentication controls. For videos you own, use YouTube Studio or Google Takeout to download the file, then upload the file into ClipNest for processing.
+- Other social platforms can change page formats, require login, rate-limit requests, or disallow downloads. Not every URL is guaranteed to work.
+- Render Free sleeps after inactivity and has limited CPU/RAM plus ephemeral disk. FFmpeg, long videos, large uploads and 4K processing can fail or time out; 24/7 uptime is not guaranteed.
+- Uploaded and generated files are temporary. The app supports only MP4/MP3 output in this version. Actual output quality depends on available source media and server capacity.
+- Use only videos you own or have permission to download. Follow each platform's terms. DRM, paywalls, login challenges, and platform access controls are not bypassed.
