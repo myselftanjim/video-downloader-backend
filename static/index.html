@@ -50,7 +50,7 @@ button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.
       <div id="qualityWrap" class="option"><label class="label" for="quality">Video quality</label><select id="quality" class="field"></select></div>
     </div>
     <section id="trimSection" class="section trim">
-      <div class="rowlabel"><h3 class="section-title">Trim video</h3><span class="field-note">Available from 10:00</span></div>
+      <div class="rowlabel"><h3 class="section-title">Trim video</h3><label class="field-note"><input id="trimEnabled" type="checkbox" style="accent-color:#8b5cf6"> Enable trim</label></div>
       <div class="grid">
         <div class="option"><label class="label" for="trimStart">Start (seconds)</label><input id="trimStart" class="field" type="number" min="0" step="0.1" value="0"></div>
         <div class="option"><label class="label" for="trimEnd">End (seconds)</label><input id="trimEnd" class="field" type="number" min="1" step="0.1" value="10"></div>
@@ -112,7 +112,7 @@ el("infoForm").addEventListener("submit",async function(ev){
   var quality=el("quality");quality.replaceChildren();
   (currentInfo.qualities||[]).forEach(function(q){var opt=document.createElement("option");opt.value=String(q);opt.textContent=q+"p";quality.appendChild(opt)});
   var best=document.createElement("option");best.value="best";best.textContent="Best available";quality.insertBefore(best,quality.firstChild);quality.value="best";
-  el("trimStart").value="0";el("trimEnd").value=String(Math.min(currentInfo.duration||10,30));
+  el("trimStart").value="0";el("trimEnd").value=String(Math.min(currentInfo.duration||10,30));el("trimEnabled").checked=false;
   el("mediaInfo").classList.remove("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");updateFormat();
   setMsg("appMsg",currentInfo.trim_allowed?"Video found. Trimming is available.":"Video found. Trim is hidden because duration is under 10 minutes (or unavailable).","success");
  }catch(e){currentInfo=null;setMsg("appMsg",e.message,"error")}
@@ -123,10 +123,8 @@ el("downloadBtn").addEventListener("click",async function(){
  if(!currentInfo)return;
  el("downloadBtn").disabled=true;el("downloadWrap").classList.add("hidden");el("statusPct").textContent="0%";el("progress").style.width="0%";showStatus("Starting…");
  var payload={url:el("url").value.trim(),quality:el("quality").value,output_format:el("format").value};
- if(el("trimSection").classList.contains("active")&&(el("trimStart").value!==""||el("trimEnd").value!=="")){
-  if(el("trimStart").value!==""||el("trimEnd").value!==String(Math.min(currentInfo.duration||10,30))){
-   payload.trim_start=Number(el("trimStart").value);payload.trim_end=Number(el("trimEnd").value);
-  }
+ if(el("trimEnabled").checked&&el("trimSection").classList.contains("active")){
+  payload.trim_start=Number(el("trimStart").value);payload.trim_end=Number(el("trimEnd").value);
  }
  try{
   var data=await api("/api/download",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -147,7 +145,7 @@ async function pollJob(){
  }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
 }
 el("downloadLink").addEventListener("click",function(){setTimeout(function(){el("downloadWrap").classList.add("hidden");currentJob=null},4000)});
-el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
+el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("trimEnabled").checked=false;el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
 el("logoutBtn").addEventListener("click",async function(){try{await api("/api/logout",{method:"POST"})}catch(e){}currentInfo=null;currentJob=null;setAuth(false)});
 checkSession();
 })();
