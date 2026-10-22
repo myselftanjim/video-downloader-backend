@@ -35,6 +35,7 @@ SESSION_COOKIE = "clipnest_session"
 SESSION_AGE = 7 * 24 * 60 * 60
 JOB_TTL = 30 * 60
 MAX_JOBS = 1
+CLEANUP_INTERVAL_SECONDS = 5 * 60
 MAX_VIDEO_SECONDS = 4 * 60 * 60
 ALLOWED_HEIGHTS = {144, 240, 360, 480, 720, 1080, 1440, 2160}
 ALLOWED_HOSTS = {
@@ -91,6 +92,20 @@ def signal_job_process(proc, force=False):
             pass
 
 
+async def terminate_job_process(proc, grace_seconds=2.0):
+    """Stop a managed subprocess group, escalating to SIGKILL if needed."""
+    if proc is None or proc.returncode is not None:
+        return
+    signal_job_process(proc, force=False)
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=grace_seconds)
+    except asyncio.TimeoutError:
+        signal_job_process(proc, force=True)
+        await proc.wait()
+    except ProcessLookupError:
+        pass
+
+
 def require_session(request: Request):
     token = request.cookies.get(SESSION_COOKIE)
     if not token or not SESSION_SECRET:
@@ -139,6 +154,52 @@ def clean_expired_jobs():
             login_attempts[ip] = fresh
         else:
             login_attempts.pop(ip, None)
+
+
+def clear_stale_temp_root():
+    """Remove temp files left behind by a previous process; in-memory job state is gone."""
+    removed = 0
+    for item in TEMP_ROOT.iterdir():
+        try:
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+            removed += 1
+        except OSError as exc:
+            print(f"[cleanup] stale-entry removal failed type={type(exc).__name__}")
+    if removed:
+        print(f"[cleanup] removed_stale_entries={removed}")
+
+
+async def periodic_job_cleanup():
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+        try:
+            clean_expired_jobs()
+        except Exception as exc:
+            # Keep housekeeping alive without logging user URLs or filenames.
+            print(f"[cleanup] periodic cleanup failed type={type(exc).__name__}")
+
+
+_cleanup_task = None
+
+
+@app.on_event("startup")
+async def start_job_cleanup():
+    global _cleanup_task
+    clear_stale_temp_root()
+    clean_expired_jobs()
+    _cleanup_task = asyncio.create_task(periodic_job_cleanup())
+
+
+@app.on_event("shutdown")
+async def stop_job_cleanup():
+    global _cleanup_task
+    if _cleanup_task is not None and not _cleanup_task.done():
+        _cleanup_task.cancel()
+        await asyncio.gather(_cleanup_task, return_exceptions=True)
+    _cleanup_task = None
 
 
 def call_ytdlp_info(url: str) -> dict:
@@ -344,7 +405,7 @@ async def process_local_conversion(job_id: str, media_id: str, quality: str,
         if not input_path.is_file() or not input_path.is_relative_to(TEMP_ROOT.resolve()):
             raise RuntimeError("Uploaded video ফাইলটি পাওয়া যায়নি।")
         output_path = directory / ("clip.mp3" if output_format == "mp3" else "clip.mp4")
-        cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-progress", "pipe:1", "-nostats"]
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-progress", "pipe:1", "-nostats"]
         if trim:
             start, end = trim
             cmd += ["-ss", ts(start), "-i", str(input_path), "-t", str(end - start)]
@@ -383,17 +444,13 @@ async def process_local_conversion(job_id: str, media_id: str, quality: str,
             await progress_task
             stderr = (await stderr_task).decode("utf-8", "replace")
         except asyncio.TimeoutError as exc:
-            if proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+            await terminate_job_process(proc)
             progress_task.cancel()
             stderr_task.cancel()
             await asyncio.gather(progress_task, stderr_task, return_exceptions=True)
             raise RuntimeError("১৫ মিনিটের processing limit শেষ হয়েছে। ছোট ভিডিও বা কম resolution ব্যবহার করো।") from exc
         except asyncio.CancelledError:
-            if proc.returncode is None:
-                proc.kill()
-                await proc.wait()
+            await terminate_job_process(proc)
             progress_task.cancel()
             stderr_task.cancel()
             await asyncio.gather(progress_task, stderr_task, return_exceptions=True)
@@ -729,12 +786,36 @@ def clean_after_download(job_id):
 
 @app.middleware("http")
 async def add_security_headers(request, call_next):
-    response = await call_next(request)
+    # Reject obviously oversized multipart uploads before Starlette parses/spools them.
+    response = None
+    if request.url.path == "/api/upload":
+        raw_length = request.headers.get("content-length")
+        try:
+            content_length = int(raw_length) if raw_length else 0
+        except ValueError:
+            content_length = 0
+        max_request_bytes = MAX_UPLOAD_MB * 1024 * 1024 + 1024 * 1024
+        if content_length > max_request_bytes:
+            response = JSONResponse(
+                status_code=413,
+                content={"detail": f"ফাইল সর্বোচ্চ {MAX_UPLOAD_MB} MB হতে পারে।"},
+            )
+    if response is None:
+        response = await call_next(request)
+
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    elif request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=86400"
+    elif request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -923,15 +1004,7 @@ async def cancel_job(job_id: str):
 
     proc = job.get("process")
     if proc is not None and proc.returncode is None:
-        try:
-            signal_job_process(proc, force=False)
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                signal_job_process(proc, force=True)
-                await proc.wait()
-        except ProcessLookupError:
-            pass
+        await terminate_job_process(proc, grace_seconds=2.0)
 
     task = job.get("task")
     if task is not None and not task.done():
