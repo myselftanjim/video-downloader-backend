@@ -1,3 +1,7 @@
 FROM ghcr.io/imputnet/yt-session-generator:webserver
+# The stock webserver waits for the first token before binding port 8080, which
+# can cause free hosting platforms to mark the deployment as unhealthy.
+COPY cobalt-api/potoken-generator-main.py /app/potoken-generator.py
+COPY cobalt-api/potoken-generator-extractor.py /app/potoken_generator/extractor.py
 EXPOSE 8080
-CMD ["sh", "-c", "./startup-webserver.sh 2>&1 | tee /app.log"]
+CMD ["sh", "-c", "./startup-webserver.sh"]
