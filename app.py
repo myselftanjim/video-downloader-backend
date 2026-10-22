@@ -140,12 +140,23 @@ def call_ytdlp_info(url: str) -> dict:
     ]
     attempts = [("default", base + [url])]
     if is_youtube:
-        # Try a second, documented client combination if YouTube's default
-        # player response cannot be parsed.
-        attempts.append((
-            "alternate_player_clients",
-            base + ["--extractor-args", "youtube:player_client=web,mweb,tv", url]
-        ))
+        # YouTube changes player responses frequently. Try multiple documented
+        # player-client combinations; do not attempt to bypass login, bot checks,
+        # DRM, or other access restrictions.
+        attempts.extend([
+            (
+                "alternate_player_clients",
+                base + ["--extractor-args", "youtube:player_client=web,mweb,tv", url]
+            ),
+            (
+                "safari_embedded_clients",
+                base + ["--extractor-args", "youtube:player_client=web_safari,web_embedded,-tv_downgraded", url]
+            ),
+            (
+                "tv_safari_clients",
+                base + ["--extractor-args", "youtube:player_client=tv,web_safari", url]
+            ),
+        ])
 
     stderr_parts = []
     for attempt_name, cmd in attempts:
