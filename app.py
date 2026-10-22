@@ -201,6 +201,22 @@ async def stop_job_cleanup():
         await asyncio.gather(_cleanup_task, return_exceptions=True)
     _cleanup_task = None
 
+    # Cancel active jobs during deploy/restart so child processes do not linger.
+    active_tasks = []
+    for job in list(jobs.values()):
+        task = job.get("task")
+        if task is not None and not task.done():
+            task.cancel()
+            active_tasks.append(task)
+    if active_tasks:
+        await asyncio.gather(*active_tasks, return_exceptions=True)
+
+    # Also catch managed processes not attached to a task (for example smoke checks).
+    for job in list(jobs.values()):
+        proc = job.get("process")
+        if proc is not None and proc.returncode is None:
+            await terminate_job_process(proc, grace_seconds=2.0)
+
 
 def call_ytdlp_info(url: str) -> dict:
     try:
