@@ -156,6 +156,10 @@ def call_ytdlp_info(url: str) -> dict:
                 "tv_safari_clients",
                 base + ["--extractor-args", "youtube:player_client=tv,web_safari", url]
             ),
+            (
+                "android_vr_client",
+                base + ["--extractor-args", "youtube:player_client=android_vr", url]
+            ),
         ])
 
     stderr_parts = []
@@ -397,6 +401,7 @@ async def _process_download_ytdlp(job_id, url, quality, output_format, trim):
             "web,mweb,tv",
             "web_safari,web_embedded,-tv_downgraded",
             "tv,web_safari",
+            "android_vr",
         ] if is_youtube else [None]
         last_error = "ডাউনলোড ব্যর্থ হয়েছে।"
         for attempt_index, client_combo in enumerate(player_clients, start=1):
