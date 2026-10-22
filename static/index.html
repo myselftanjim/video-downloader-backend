@@ -99,6 +99,25 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .upload-action{width:100%;margin-top:16px}
 .upload-note{margin-top:11px}
 @media(max-width:600px){.app-nav{margin-bottom:16px}.nav-button{padding:10px 8px;font-size:13px}.converter-intro{align-items:flex-start}.converter-mark{flex-basis:42px;height:42px;border-radius:13px}.upload-picker{align-items:stretch}.upload-picker .btn{width:100%}.selected-file{flex-basis:100%}}
+
+.filename-control{margin-top:20px}
+.filename-entry{display:flex;align-items:center;gap:9px}
+.filename-entry .field{min-width:0;flex:1}
+.extension-chip{flex:0 0 auto;padding:11px 12px;border:1px solid rgba(168,140,255,.28);border-radius:11px;background:rgba(168,140,255,.09);color:var(--purple);font:600 13px "DM Sans",sans-serif}
+.drop-zone{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;min-height:174px;padding:24px;border:1.5px dashed rgba(168,140,255,.42);border-radius:16px;background:linear-gradient(145deg,rgba(168,140,255,.055),rgba(14,16,24,.6));cursor:pointer;outline:none;transition:border-color .18s,background .18s,transform .18s}
+.drop-zone:hover,.drop-zone:focus-visible,.drop-zone.drag-over{border-color:var(--lime);background:rgba(215,247,121,.06)}
+.drop-zone.drag-over{transform:scale(1.005)}
+.drop-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:var(--brand-gradient);color:#fff;font-size:24px;box-shadow:0 8px 20px #684BCB30}
+.drop-zone strong{font:600 15px "Space Grotesk","DM Sans",sans-serif;color:var(--text)}
+.drop-zone .drop-subtitle{font-size:13px;color:var(--muted)}
+.drop-zone .drop-formats{font-size:11px;color:var(--muted);margin-top:3px}
+.preview-panel{margin-top:16px;border:1px solid var(--line);border-radius:15px;padding:12px;background:rgba(8,9,16,.7)}
+.file-preview{display:block;width:100%;max-height:390px;aspect-ratio:16/9;object-fit:contain;border-radius:10px;background:#080910}
+.video-meta{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px;font-size:12px;color:var(--muted)}
+.video-meta span{border:1px solid var(--line);background:rgba(255,255,255,.025);border-radius:999px;padding:4px 8px}
+.job-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:12px}
+.job-actions .btn{min-width:126px}
+@media(max-width:600px){.filename-entry{align-items:stretch}.extension-chip{display:grid;place-items:center}.drop-zone{min-height:150px;padding:18px}.job-actions{display:grid;grid-template-columns:1fr 1fr}.job-actions .btn{min-width:0;width:100%}}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -154,19 +173,42 @@ button:disabled{opacity:.45;cursor:not-allowed}
         <h3>Upload a video</h3>
         <span class="small">Up to 90 MB</span>
       </div>
-      <p class="hint">MP4, MOV, MKV, WebM, AVI and other supported formats. Uploaded files are temporary and automatically deleted after download or expiry.</p>
+      <p class="hint">Drop a video below or select it from your device. The preview stays on your device until you choose Upload & inspect.</p>
       <input id="localFile" class="hidden" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,.m4v,.mpeg,.mpg,.3gp,video/*">
+      <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Drop a video file here or choose a file">
+        <span class="drop-icon" aria-hidden="true">↑</span>
+        <strong>Drop your video here</strong>
+        <span class="drop-subtitle">or click to browse your device</span>
+        <span class="drop-formats">MP4 · MOV · MKV · WebM · AVI · Up to 90 MB</span>
+      </div>
       <div class="upload-picker">
         <button id="chooseFileBtn" class="btn secondary" type="button">Choose video file</button>
         <span id="selectedFileName" class="selected-file">No file selected</span>
       </div>
+      <div id="filePreviewPanel" class="preview-panel hidden">
+        <video id="filePreview" class="file-preview" controls playsinline preload="metadata"></video>
+        <div class="video-meta" aria-live="polite">
+          <span id="fileMetaType">Video</span>
+          <span id="fileMetaSize">—</span>
+          <span id="fileMetaDuration">Reading duration…</span>
+          <span id="fileMetaResolution">Reading resolution…</span>
+        </div>
+      </div>
       <button id="uploadBtn" class="btn upload-action" type="button" disabled>Upload & inspect <span aria-hidden="true">↑</span></button>
-      <p class="small upload-note">Only upload videos you own or have permission to use.</p>
+      <p class="small upload-note">Only upload videos you own or have permission to use. The server copy is temporary.</p>
     </section>
   </div>
   <section id="mediaInfo" class="section hidden">
     <div class="rowlabel"><h3 id="videoTitle" class="section-title" style="font-size:16px;margin:0 0 5px"></h3><span id="source" class="small"></span></div>
     <div class="small">Duration: <strong id="duration">—</strong></div>
+    <div class="filename-control">
+      <label class="label" for="downloadName">Download file name</label>
+      <div class="filename-entry">
+        <input id="downloadName" class="field" type="text" autocomplete="off" maxlength="180" placeholder="Enter a file name">
+        <span id="filenameExtension" class="extension-chip">.mp4</span>
+      </div>
+      <p class="hint">You can edit the name. The selected format extension is added automatically.</p>
+    </div>
     <div class="grid" style="margin-top:18px">
       <div class="option"><label class="label" for="format">Output format</label><select id="format" class="field"><option value="mp4">MP4 video</option><option value="mp3">MP3 audio</option></select></div>
       <div id="qualityWrap" class="option"><label class="label" for="quality">Video quality</label><select id="quality" class="field"></select></div>
@@ -180,7 +222,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
       <p class="hint">Choose the section to export. Precise trimming may re-encode the media.</p>
     </section>
     <div class="actions"><button id="downloadBtn" type="button" class="btn">Prepare download <span aria-hidden="true">↓</span></button><button id="resetBtn" type="button" class="btn ghost">New link</button></div>
-    <div id="statusBox" class="status" role="status" aria-live="polite"><div class="statusline"><span id="statusText">Ready</span><strong id="statusPct">0%</strong></div><div class="bar"><span id="progress"></span></div><div id="downloadWrap" class="hidden" style="margin-top:14px"><a id="downloadLink" class="btn" href="#" style="display:block;text-align:center;text-decoration:none">Download file</a><p class="small">The temporary server copy is removed after download or within 30 minutes.</p></div></div>
+    <div id="statusBox" class="status" role="status" aria-live="polite"><div class="statusline"><span id="statusText">Ready</span><strong id="statusPct">0%</strong></div><div class="bar"><span id="progress"></span></div><div class="job-actions"><button id="cancelJobBtn" class="btn ghost hidden" type="button">Cancel job</button><button id="retryBtn" class="btn secondary hidden" type="button">Retry</button></div><div id="downloadWrap" class="hidden" style="margin-top:14px"><a id="downloadLink" class="btn" href="#" style="display:block;text-align:center;text-decoration:none">Download file</a><p class="small">The temporary server copy is removed after download or within 30 minutes.</p></div></div>
     <p class="warn">MediaNest cannot guarantee every social link will work. It does not bypass DRM, login restrictions or platform download controls. Large videos may exceed the free server's limits.</p>
   </section>
   <div class="footer"><span>One processing job at a time</span><button id="logoutBtn" class="btn ghost" type="button" style="padding:6px 10px;font-size:12px">Log out</button></div>
@@ -207,12 +249,66 @@ function setMsg(id,message,type){var n=el(id);n.textContent=message||"";n.classN
 function setAuth(yes){el("loginCard").classList.toggle("hidden",yes);el("appCard").classList.toggle("hidden",!yes)}
 function showStatus(message,type){el("statusBox").classList.add("show");el("statusText").textContent=message;el("statusText").className=type==="error"?"error":type==="success"?"success":""}
 function durationSeconds(){return Number(currentInfo&&currentInfo.duration||0)}
+function titleStem(title){
+ return String(title||"MediaNest Download")
+  .replace(/\.(mp4|mp3|m4v|mov|mkv|webm|avi|mpeg|mpg|3gp)$/i,"")
+  .replace(/\s+/g," ").trim()||"MediaNest Download";
+}
 function updateFormat(){
  var mp3=el("format").value==="mp3";
  el("qualityWrap").classList.toggle("hidden",mp3);
+ el("filenameExtension").textContent=mp3?".mp3":".mp4";
  if(mp3){el("trimSection").classList.remove("active")}
  else{el("trimSection").classList.toggle("active",Boolean(currentInfo&&currentInfo.trim_allowed))}
 }
+var previewObjectUrl=null;
+function clearLocalPreview(){
+ if(previewObjectUrl){URL.revokeObjectURL(previewObjectUrl);previewObjectUrl=null}
+ var video=el("filePreview");
+ if(video){video.pause();video.removeAttribute("src");video.load()}
+ el("filePreviewPanel").classList.add("hidden");
+ el("fileMetaType").textContent="Video";
+ el("fileMetaSize").textContent="—";
+ el("fileMetaDuration").textContent="Reading duration…";
+ el("fileMetaResolution").textContent="Reading resolution…";
+}
+function formatDuration(seconds){
+ if(!Number.isFinite(seconds)||seconds<0)return "Duration unavailable";
+ var total=Math.floor(seconds),h=Math.floor(total/3600),m=Math.floor((total%3600)/60),s=total%60;
+ return h?String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(s).padStart(2,"0"):String(m).padStart(2,"0")+":"+String(s).padStart(2,"0");
+}
+function selectLocalFile(file, alreadyInInput){
+ if(!file)return;
+ var ext=(file.name.split(".").pop()||"").toLowerCase();
+ var allowed=["mp4","mov","mkv","webm","avi","m4v","mpeg","mpg","3gp"];
+ if(!allowed.includes(ext)){
+  el("localFile").value="";clearLocalPreview();el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;
+  setMsg("appMsg","This video format is not supported. Choose MP4, MOV, MKV, WebM, AVI, M4V, MPEG, MPG or 3GP.","error");
+  return;
+ }
+ var maxBytes=90*1024*1024;
+ if(file.size>maxBytes){
+  el("localFile").value="";clearLocalPreview();el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;
+  setMsg("appMsg","This file exceeds the 90 MB upload limit. Choose a smaller video.","error");
+  return;
+ }
+ if(!alreadyInInput){
+  try{var transfer=new DataTransfer();transfer.items.add(file);el("localFile").files=transfer.files}
+  catch(err){setMsg("appMsg","Please use Choose video file to select this file in your browser.","error");return}
+ }
+ clearLocalPreview();
+ previewObjectUrl=URL.createObjectURL(file);
+ el("filePreview").src=previewObjectUrl;
+ el("filePreviewPanel").classList.remove("hidden");
+ el("selectedFileName").textContent=file.name;
+ el("fileMetaType").textContent=file.type||("video/"+ext);
+ el("fileMetaSize").textContent=(file.size/1024/1024).toFixed(1)+" MB";
+ el("fileMetaDuration").textContent="Reading duration…";
+ el("fileMetaResolution").textContent="Reading resolution…";
+ el("uploadBtn").disabled=false;
+ setMsg("appMsg","Video selected. Review the preview, then upload when ready.","success");
+}
+
 var activeView="downloader";
 function setActiveView(view){
  if(view===activeView)return;
@@ -229,8 +325,8 @@ function setActiveView(view){
  el("downloaderTab").setAttribute("aria-selected",String(view==="downloader"));
  el("converterTab").setAttribute("aria-selected",String(view==="converter"));
  currentInfo=null;mediaSource="url";uploadedMediaId=null;
- el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;
- el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");
+ el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;clearLocalPreview();
+ el("downloadName").value="";el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");el("retryBtn").classList.add("hidden");el("cancelJobBtn").classList.add("hidden");
  setMsg("appMsg","");
 }
 el("downloaderTab").addEventListener("click",function(){setActiveView("downloader")});
@@ -254,6 +350,7 @@ function showMediaInfo(info){
   (info.qualities||[]).forEach(function(q){var opt=document.createElement("option");opt.value=String(q);opt.textContent=q+"p";quality.appendChild(opt)});
   var best=document.createElement("option");best.value="best";best.textContent="Best available";quality.insertBefore(best,quality.firstChild);quality.value="best";
   el("trimStart").value="0";el("trimEnd").value=String(Math.min(info.duration||10,30));el("trimEnabled").checked=false;
+  el("downloadName").value=titleStem(info.title);
   el("resetBtn").textContent=mediaSource==="upload"?"Choose another file":"New link";
   el("mediaInfo").classList.remove("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");updateFormat();
 }
@@ -269,10 +366,25 @@ el("infoForm").addEventListener("submit",async function(ev){
  finally{el("inspectBtn").disabled=false}
 });
 el("chooseFileBtn").addEventListener("click",function(){el("localFile").click()});
-el("localFile").addEventListener("change",function(){
- var file=el("localFile").files[0];
- el("selectedFileName").textContent=file?file.name+" ("+(file.size/1024/1024).toFixed(1)+" MB)":"No file selected";
- el("uploadBtn").disabled=!file;
+el("dropZone").addEventListener("click",function(){el("localFile").click()});
+el("dropZone").addEventListener("keydown",function(ev){
+ if(ev.key==="Enter"||ev.key===" "){ev.preventDefault();el("localFile").click()}
+});
+el("dropZone").addEventListener("dragover",function(ev){ev.preventDefault();el("dropZone").classList.add("drag-over")});
+el("dropZone").addEventListener("dragleave",function(ev){ev.preventDefault();el("dropZone").classList.remove("drag-over")});
+el("dropZone").addEventListener("drop",function(ev){
+ ev.preventDefault();el("dropZone").classList.remove("drag-over");
+ var file=ev.dataTransfer&&ev.dataTransfer.files&&ev.dataTransfer.files[0];
+ if(file)selectLocalFile(file,false);
+});
+el("localFile").addEventListener("change",function(){selectLocalFile(el("localFile").files[0],true)});
+el("filePreview").addEventListener("loadedmetadata",function(){
+ var video=el("filePreview");
+ el("fileMetaDuration").textContent=formatDuration(video.duration);
+ el("fileMetaResolution").textContent=video.videoWidth&&video.videoHeight?video.videoWidth+" × "+video.videoHeight:"Resolution unavailable";
+});
+el("filePreview").addEventListener("error",function(){
+ if(previewObjectUrl)el("fileMetaDuration").textContent="Preview unavailable; file may still be uploadable";
 });
 el("uploadBtn").addEventListener("click",async function(){
  var file=el("localFile").files[0];
@@ -287,19 +399,45 @@ el("uploadBtn").addEventListener("click",async function(){
  finally{el("uploadBtn").disabled=!el("localFile").files[0]}
 });
 el("format").addEventListener("change",updateFormat);
-el("downloadBtn").addEventListener("click",async function(){
- if(!currentInfo)return;
- el("downloadBtn").disabled=true;el("downloadWrap").classList.add("hidden");el("statusPct").textContent="0%";el("progress").style.width="0%";showStatus("Starting…");
- var payload={quality:el("quality").value,output_format:el("format").value};
+function buildJobRequest(){
+ var payload={
+  quality:el("quality").value,
+  output_format:el("format").value,
+  download_name:el("downloadName").value.trim()||titleStem(currentInfo&&currentInfo.title)
+ };
  if(mediaSource==="upload"){payload.media_id=uploadedMediaId;}else{payload.url=el("url").value.trim();}
  if(el("trimEnabled").checked&&el("trimSection").classList.contains("active")){
   payload.trim_start=Number(el("trimStart").value);payload.trim_end=Number(el("trimEnd").value);
  }
+ return {endpoint:mediaSource==="upload"?"/api/convert":"/api/download",payload:payload};
+}
+async function startJobRequest(request){
+ if(!request||!currentInfo)return;
+ el("downloadBtn").disabled=true;el("retryBtn").classList.add("hidden");el("cancelJobBtn").classList.add("hidden");
+ el("downloadWrap").classList.add("hidden");el("statusPct").textContent="0%";el("progress").style.width="0%";showStatus("Starting…");
  try{
-  var endpoint=mediaSource==="upload"?"/api/convert":"/api/download";
-  var data=await api(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  currentJob=data.job_id;pollJob();
- }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
+  var data=await api(request.endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(request.payload)});
+  currentJob=data.job_id;
+  el("cancelJobBtn").disabled=false;el("cancelJobBtn").classList.remove("hidden");
+  pollJob();
+ }catch(e){
+  currentJob=null;showStatus(e.message,"error");el("downloadBtn").disabled=false;el("retryBtn").classList.remove("hidden");
+ }
+}
+el("downloadBtn").addEventListener("click",function(){if(currentInfo)startJobRequest(buildJobRequest())});
+el("retryBtn").addEventListener("click",function(){if(currentInfo)startJobRequest(buildJobRequest())});
+el("cancelJobBtn").addEventListener("click",async function(){
+ if(!currentJob)return;
+ var jobId=currentJob;el("cancelJobBtn").disabled=true;
+ try{
+  var result=await api("/api/jobs/"+encodeURIComponent(jobId)+"/cancel",{method:"POST"});
+  if(pollHandle)clearTimeout(pollHandle);
+  currentJob=null;showStatus(result.message||"Job cancelled.");el("statusPct").textContent="0%";el("progress").style.width="0%";
+  el("cancelJobBtn").classList.add("hidden");el("retryBtn").classList.remove("hidden");el("downloadBtn").disabled=false;
+ }catch(e){
+  showStatus(e.message,"error");
+  if(currentJob)pollJob();
+ }finally{el("cancelJobBtn").disabled=false}
 });
 async function pollJob(){
  if(!currentJob)return;
@@ -308,14 +446,29 @@ async function pollJob(){
   el("statusText").textContent=data.message||data.status;
   var pct=Math.round(Number(data.progress)||0);el("statusPct").textContent=pct+"%";el("progress").style.width=pct+"%";
   if(data.status==="completed"){
+   currentJob=null;el("cancelJobBtn").classList.add("hidden");el("retryBtn").classList.add("hidden");
    el("downloadLink").href=data.download_url;el("downloadLink").setAttribute("download",data.filename||"media");el("downloadLink").textContent="Download "+(data.filename||"file");el("downloadWrap").classList.remove("hidden");showStatus("Your file is ready","success");el("downloadBtn").disabled=false;return;
   }
-  if(data.status==="failed"||data.status==="expired"){showStatus(data.message||"Processing failed","error");el("downloadBtn").disabled=false;return}
+  if(data.status==="failed"||data.status==="expired"||data.status==="cancelled"){
+   currentJob=null;el("cancelJobBtn").classList.add("hidden");el("retryBtn").classList.remove("hidden");
+   showStatus(data.message||(data.status==="cancelled"?"Job cancelled":"Processing failed"),data.status==="cancelled"?"":"error");
+   el("downloadBtn").disabled=false;return;
+  }
+  el("cancelJobBtn").classList.remove("hidden");el("retryBtn").classList.add("hidden");
   pollHandle=setTimeout(pollJob,1800);
- }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
+ }catch(e){
+  showStatus(e.message,"error");
+  if(currentJob)pollHandle=setTimeout(pollJob,3500);
+ }
 }
-el("downloadLink").addEventListener("click",function(){setTimeout(function(){el("downloadWrap").classList.add("hidden");currentJob=null},4000)});
-el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;el("trimEnabled").checked=false;el("mediaInfo").classList.add("hidden");mediaSource="url";uploadedMediaId=null;el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
+el("downloadLink").addEventListener("click",function(){setTimeout(function(){el("downloadWrap").classList.add("hidden")},4000)});
+el("resetBtn").addEventListener("click",function(){
+ if(currentJob){setMsg("appMsg","Cancel the current job before resetting this panel.","error");return}
+ currentInfo=null;el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;
+ clearLocalPreview();el("downloadName").value="";el("trimEnabled").checked=false;el("mediaInfo").classList.add("hidden");mediaSource="url";uploadedMediaId=null;
+ el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");el("retryBtn").classList.add("hidden");el("cancelJobBtn").classList.add("hidden");
+ el("format").value="mp4";updateFormat();setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)
+});
 el("logoutBtn").addEventListener("click",async function(){try{await api("/api/logout",{method:"POST"})}catch(e){}currentInfo=null;currentJob=null;setActiveView("downloader");setAuth(false)});
 checkSession();
 })();
