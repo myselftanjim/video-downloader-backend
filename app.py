@@ -9,6 +9,7 @@ import signal
 import subprocess
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 from secrets import token_hex
 from urllib.parse import urljoin, urlsplit
@@ -38,6 +39,8 @@ MAX_JOBS = 1
 CLEANUP_INTERVAL_SECONDS = 5 * 60
 MAX_VIDEO_SECONDS = 4 * 60 * 60
 ALLOWED_HEIGHTS = {144, 240, 360, 480, 720, 1080, 1440, 2160}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp", ".tif", ".tiff"}
+MAX_IMAGE_FILES = 40
 PINTEREST_DOMAINS = {
     "pinterest.com", "pinterest.fr", "pinterest.de", "pinterest.ch",
     "pinterest.jp", "pinterest.cl", "pinterest.ca", "pinterest.it",
@@ -90,6 +93,10 @@ class ConvertBody(BaseModel):
     download_name: str | None = Field(default=None, max_length=180)
     trim_start: float | None = Field(default=None, ge=0, le=14400)
     trim_end: float | None = Field(default=None, gt=0, le=14400)
+
+
+class ImageDownloadBody(URLBody):
+    download_name: str | None = Field(default=None, max_length=180)
 
 
 def signal_job_process(proc, force=False):
@@ -412,6 +419,204 @@ def safe_download_filename(title: str, output_format: str) -> str:
         name = "_" + name
     extension = "mp3" if output_format == "mp3" else "mp4"
     return f"{name}.{extension}"
+
+
+def safe_image_basename(value: str) -> str:
+    """Return a readable, portable base filename without an image extension."""
+    name = str(value or "").strip()
+    if Path(name).suffix.lower() in IMAGE_EXTENSIONS:
+        name = Path(name).stem
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]+', "-", name)
+    name = re.sub(r"\s+", " ", name).strip(" .-")
+    name = name[:120].rstrip(" .-")
+    return name or "MediaNest Images"
+
+
+def clear_directory_contents(directory: Path):
+    for child in list(directory.iterdir()):
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            try:
+                child.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def collect_image_files(directory: Path):
+    root = directory.resolve()
+    files = []
+    for path in directory.rglob("*"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root) or resolved.stat().st_size <= 0:
+                continue
+            files.append(resolved)
+        except OSError:
+            continue
+    return sorted(files, key=lambda p: str(p).lower())
+
+
+def directory_size_bytes(directory: Path) -> int:
+    total = 0
+    for path in directory.rglob("*"):
+        try:
+            if path.is_file() and not path.is_symlink():
+                total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+async def run_image_tool(job_id: str, command: list[str], directory: Path, timeout_seconds=15 * 60):
+    """Run an image extractor with disk, timeout, and cancellation limits."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            start_new_session=True
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("Image extractor is not installed on the server.") from exc
+
+    job = jobs[job_id]
+    job["process"] = proc
+    stderr_task = asyncio.create_task(proc.stderr.read())
+    wait_task = asyncio.create_task(proc.wait())
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    try:
+        while not wait_task.done():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                await terminate_job_process(proc, grace_seconds=2.0)
+                await asyncio.gather(wait_task, stderr_task, return_exceptions=True)
+                raise RuntimeError("Image extraction reached the 15-minute limit. Try a smaller or more direct post link.")
+            await asyncio.wait({wait_task}, timeout=min(1.0, remaining))
+            if directory_size_bytes(directory) > MAX_DOWNLOAD_MB * 1024 * 1024:
+                await terminate_job_process(proc, grace_seconds=2.0)
+                await asyncio.gather(wait_task, stderr_task, return_exceptions=True)
+                raise RuntimeError(f"Image files exceed the {MAX_DOWNLOAD_MB} MB processing limit.")
+        code = wait_task.result()
+        stderr = (await stderr_task).decode("utf-8", "replace")[-1200:]
+        if directory_size_bytes(directory) > MAX_DOWNLOAD_MB * 1024 * 1024:
+            raise RuntimeError(f"Image files exceed the {MAX_DOWNLOAD_MB} MB processing limit.")
+        return code, stderr
+    except asyncio.CancelledError:
+        await terminate_job_process(proc, grace_seconds=2.0)
+        await asyncio.gather(wait_task, stderr_task, return_exceptions=True)
+        raise
+    finally:
+        job.pop("process", None)
+
+
+async def process_image_download(job_id: str, url: str, requested_name: str):
+    """Prefer original image gallery files; fall back to the best extractor thumbnail."""
+    job = jobs[job_id]
+    directory = TEMP_ROOT / job_id
+    directory.mkdir(parents=True, exist_ok=True)
+    base_name = safe_image_basename(requested_name)
+    max_bytes = MAX_DOWNLOAD_MB * 1024 * 1024
+    try:
+        job.update(progress=8, message="Looking for original, full-resolution images…")
+        gallery_filter = "extension in ('jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp', 'tif', 'tiff')"
+        gallery_command = [
+            "gallery-dl", "--no-input", "--quiet",
+            "--directory", str(directory),
+            "--filename", "{num:>03}.{extension}",
+            "--range", f"1-{MAX_IMAGE_FILES}",
+            "--filter", gallery_filter,
+            url,
+        ]
+        gallery_error = ""
+        try:
+            _, gallery_error = await run_image_tool(job_id, gallery_command, directory)
+        except asyncio.CancelledError:
+            raise
+        except RuntimeError as exc:
+            gallery_error = str(exc)
+            if "15-minute limit" in gallery_error or "processing limit" in gallery_error:
+                raise
+
+        images = collect_image_files(directory)
+        if not images:
+            clear_directory_contents(directory)
+            job.update(progress=48, message="No original image set found. Trying the best available image thumbnail…")
+            thumbnail_command = [
+                "yt-dlp", "--write-thumbnail", "--skip-download", "--no-playlist",
+                "--no-warnings", "--no-progress", "--socket-timeout", "15",
+                "--retries", "1", "--fragment-retries", "1",
+                "-P", str(directory), "-o", "%(title).120B.%(ext)s", url,
+            ]
+            try:
+                _, _ = await run_image_tool(job_id, thumbnail_command, directory)
+            except asyncio.CancelledError:
+                raise
+            except RuntimeError as exc:
+                if "15-minute limit" in str(exc) or "processing limit" in str(exc):
+                    raise
+            images = collect_image_files(directory)
+
+        if not images:
+            raise RuntimeError(
+                "এই লিংক থেকে public, downloadable image পাওয়া যায়নি। Public post বা Pin link ব্যবহার করো; private/login-restricted content সমর্থিত নয়।"
+            )
+
+        if len(images) > MAX_IMAGE_FILES:
+            keep = set(images[:MAX_IMAGE_FILES])
+            for path in images[MAX_IMAGE_FILES:]:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            images = images[:MAX_IMAGE_FILES]
+
+        total_image_bytes = sum(path.stat().st_size for path in images if path.is_file())
+        if total_image_bytes > max_bytes:
+            raise RuntimeError(f"Image files exceed the {MAX_DOWNLOAD_MB} MB processing limit.")
+
+        if len(images) == 1:
+            source = images[0]
+            extension = source.suffix.lower() if source.suffix.lower() in IMAGE_EXTENSIONS else ".jpg"
+            output_name = f"{base_name}{extension}"
+            output_path = directory / output_name
+            if source != output_path:
+                if output_path.exists():
+                    output_path.unlink()
+                source.rename(output_path)
+        else:
+            output_name = f"{base_name}.zip"
+            output_path = directory / output_name
+            job.update(progress=85, message=f"Packing {len(images)} original-quality images into a ZIP…")
+            with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                for index, path in enumerate(images, start=1):
+                    extension = path.suffix.lower() if path.suffix.lower() in IMAGE_EXTENSIONS else ".jpg"
+                    archive.write(path, arcname=f"image-{index:03d}{extension}")
+            if not output_path.is_file() or output_path.stat().st_size == 0 or output_path.stat().st_size > max_bytes:
+                raise RuntimeError(f"Prepared image archive exceeds the {MAX_DOWNLOAD_MB} MB limit.")
+            for path in images:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            for path in list(directory.rglob("*")):
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path, ignore_errors=True)
+
+        if not output_path.is_file() or not output_path.is_relative_to(TEMP_ROOT.resolve()):
+            raise RuntimeError("The image output file could not be prepared.")
+        job.update(
+            status="completed", progress=100, message=f"{len(images)} image(s) ready at the best available quality.",
+            output_file=str(output_path), filename=output_name,
+        )
+    except asyncio.CancelledError:
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(directory, ignore_errors=True)
+        job.update(status="failed", progress=0, message=str(exc)[:500], output_file=None)
+    finally:
+        job.pop("process", None)
 
 
 def shape_info(info: dict):
@@ -1083,6 +1288,25 @@ async def download(body: DownloadBody):
                     "title": source_title, "filename": safe_download_filename(requested_name, body.output_format)}
     jobs[job_id]["task"] = asyncio.create_task(
         process_download(job_id, url, body.quality, body.output_format, trim)
+    )
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.post("/api/image-download", dependencies=[Depends(require_session)])
+async def download_images(body: ImageDownloadBody):
+    clean_expired_jobs()
+    if any(job.get("status") == "running" for job in jobs.values()):
+        raise HTTPException(429, "একটি কাজ চলছে। সেটি শেষ হলে আবার চেষ্টা করো।")
+    url = await normalize_source_url(body.url)
+    job_id = token_hex(10)
+    requested_name = safe_image_basename(body.download_name or "MediaNest Images")
+    jobs[job_id] = {
+        "id": job_id, "status": "running", "progress": 0,
+        "message": "Starting image extraction…", "created_at": time.time(),
+        "output_file": None, "title": requested_name, "filename": None,
+    }
+    jobs[job_id]["task"] = asyncio.create_task(
+        process_image_download(job_id, url, requested_name)
     )
     return {"job_id": job_id, "status": "running"}
 
