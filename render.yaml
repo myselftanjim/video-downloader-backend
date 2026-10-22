@@ -5,6 +5,8 @@ services:
     plan: free
     region: singapore
     dockerfilePath: ./Dockerfile
+    domains:
+      - medianest.reelsbytanjim.com
     healthCheckPath: /health
     autoDeploy: true
     envVars:
