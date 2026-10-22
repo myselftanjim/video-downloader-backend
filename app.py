@@ -781,3 +781,37 @@ async def job_file(job_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(404, "Output ফাইলটি পাওয়া যায়নি।")
     background_tasks.add_task(clean_after_download, job_id)
     return FileResponse(path, filename=job.get("filename") or path.name, media_type="application/octet-stream")
+
+@app.on_event("startup")
+async def _clipnest_optional_cobalt_smoke_test():
+    test_url = os.getenv("COBALT_SMOKE_TEST_URL", "").strip()
+    if not test_url or not cobalt_enabled():
+        return
+
+    async def run_once():
+        try:
+            test_url_validated = validate_url(test_url)
+            media_url, filename = await cobalt_media_url(test_url_validated, "360", "mp4")
+            media_host = (urlsplit(media_url).hostname or "").lower()
+            api_host = (urlsplit(COBALT_API_URL).hostname or "").lower()
+            headers = {"Range": "bytes=0-65535"}
+            if media_host == api_host:
+                headers["Authorization"] = f"Api-Key {COBALT_API_KEY}"
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(45.0, connect=15.0), follow_redirects=True
+            ) as client:
+                async with client.stream("GET", media_url, headers=headers) as response:
+                    response.raise_for_status()
+                    first_chunk = b""
+                    async for chunk in response.aiter_bytes(65536):
+                        if chunk:
+                            first_chunk = chunk[:64]
+                            break
+            if not first_chunk:
+                raise RuntimeError("The media endpoint returned no data.")
+            print(f"[cobalt-smoke-test] PASS extraction_and_stream bytes={len(first_chunk)} file={Path(filename).name}")
+        except Exception as exc:
+            print(f"[cobalt-smoke-test] FAIL {type(exc).__name__}: {str(exc)[:220]}")
+
+    asyncio.create_task(run_once())
+
