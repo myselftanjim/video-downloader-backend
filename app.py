@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
 from secrets import token_hex
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -72,6 +73,9 @@ IMAGE_HOSTS = set(ALLOWED_HOSTS) | {
     "vsco.co", "weibo.com", "blogger.com", "blogspot.com", "wordpress.com",
     "smugmug.com", "bsky.app", "bsky.social", "threads.net", "patreon.com",
     "imagebam.com", "imgbox.com", "imgchest.com", "dropbox.com",
+    "tiktokcdn.com", "tiktokcdn-us.com", "tiktokv.com", "ytimg.com",
+    "googleusercontent.com", "static.wixstatic.com", "cdn.shopify.com",
+    "images.squarespace-cdn.com", "cdn.discordapp.com", "discordapp.net",
 }
 DIRECT_IMAGE_HOSTS = {
     "i.pinimg.com", "images.unsplash.com", "images.pexels.com",
@@ -79,6 +83,10 @@ DIRECT_IMAGE_HOSTS = {
     "i.redd.it", "preview.redd.it", "external-preview.redd.it",
     "i.imgur.com", "staticflickr.com", "media.tumblr.com",
     "cdninstagram.com", "fbcdn.net", "upload.wikimedia.org",
+    "tiktokcdn.com", "tiktokcdn-us.com", "tiktokv.com", "ytimg.com",
+    "googleusercontent.com", "static.wixstatic.com", "cdn.shopify.com",
+    "images.squarespace-cdn.com", "cdn.discordapp.com", "discordapp.net",
+    "cdn.bsky.app",
 }
 IMAGE_SHORT_HOSTS = {
     "pin.it", "flic.kr", "redd.it", "t.co", "youtu.be", "fb.watch",
@@ -722,6 +730,112 @@ async def download_direct_image(job_id: str, raw_url: str, directory: Path, base
     raise RuntimeError("সরাসরি image download ব্যর্থ হয়েছে। URL expired, size limit-এর বাইরে, বা source থেকে blocked হতে পারে.")
 
 
+class _PublicPageImageParser(HTMLParser):
+    """Read only public preview-image metadata from an allowlisted page."""
+    IMAGE_KEYS = {
+        "og:image", "og:image:url", "og:image:secure_url",
+        "twitter:image", "twitter:image:src", "image", "thumbnail",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.images = []
+
+    def handle_starttag(self, tag, attrs):
+        values = {str(k).lower(): (v or "") for k, v in attrs}
+        if tag.lower() == "meta":
+            key = (
+                values.get("property") or values.get("name")
+                or values.get("itemprop") or ""
+            ).strip().lower()
+            image = values.get("content", "").strip()
+            if key in self.IMAGE_KEYS and image:
+                self.images.append(image)
+        elif tag.lower() == "link":
+            rel = {part.lower() for part in values.get("rel", "").split()}
+            image = values.get("href", "").strip()
+            if "image_src" in rel and image:
+                self.images.append(image)
+
+
+async def download_public_page_preview(
+    job_id: str, page_url: str, directory: Path, base_name: str
+) -> Path:
+    """Try public OG/Twitter image metadata without logging full URLs or bypassing access controls."""
+    current = validate_image_url(page_url)
+    max_html_bytes = 3 * 1024 * 1024
+    html_bytes = bytearray()
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15.0, connect=7.0),
+        follow_redirects=False,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; MediaNest/1.0)",
+            "Accept": "text/html,application/xhtml+xml,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.8",
+        },
+    ) as client:
+        for _ in range(6):
+            async with client.stream("GET", current) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise RuntimeError("Public post redirect-এর destination পাওয়া যায়নি।")
+                    current = validate_image_url(urljoin(current, location))
+                    continue
+                if response.status_code < 200 or response.status_code >= 300:
+                    raise RuntimeError(f"Public post HTTP {response.status_code} দিয়েছে।")
+
+                content_type = response.headers.get("content-type", "").lower()
+                final_host = (urlsplit(current).hostname or "").lower().rstrip(".")
+                if content_type.startswith("image/"):
+                    if not is_direct_image_host(final_host):
+                        raise RuntimeError("Redirect একটি অনুমোদিত image CDN-এ যায়নি।")
+                    return await download_direct_image(job_id, current, directory, base_name)
+
+                if "html" not in content_type and "xhtml" not in content_type:
+                    raise RuntimeError("Public page থেকে image metadata পাওয়া যায়নি।")
+
+                length = response.headers.get("content-length")
+                try:
+                    if length and int(length) > max_html_bytes:
+                        raise RuntimeError("Public page metadata response খুব বড়।")
+                except ValueError:
+                    pass
+
+                async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                    html_bytes.extend(chunk)
+                    if len(html_bytes) > max_html_bytes:
+                        raise RuntimeError("Public page metadata response খুব বড়।")
+                break
+        else:
+            raise RuntimeError("Public post redirect সীমা অতিক্রম করেছে।")
+
+    parser = _PublicPageImageParser()
+    parser.feed(html_bytes.decode("utf-8", "replace"))
+    seen = set()
+    source_host = (urlsplit(current).hostname or "").lower().rstrip(".")
+    for raw_image_url in parser.images[:12]:
+        candidate = urljoin(current, raw_image_url.strip())
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            safe_candidate = validate_image_url(candidate)
+        except HTTPException:
+            continue
+        candidate_host = (urlsplit(safe_candidate).hostname or "").lower().rstrip(".")
+        if candidate_host == source_host:
+            # Avoid re-downloading the source HTML as if it were an image.
+            continue
+        try:
+            return await download_direct_image(job_id, safe_candidate, directory, base_name)
+        except (HTTPException, httpx.HTTPError, OSError, RuntimeError):
+            continue
+
+    raise RuntimeError("Public page-এ accessible OG/Twitter preview image পাওয়া যায়নি.")
+
+
 
 async def process_image_download(job_id: str, url: str, requested_name: str):
     """Prefer original image gallery files; fall back to the best extractor thumbnail."""
@@ -757,7 +871,19 @@ async def process_image_download(job_id: str, url: str, requested_name: str):
             images = collect_image_files(directory)
             if not images:
                 clear_directory_contents(directory)
-                job.update(progress=48, message="No original image set found. Trying the best available image thumbnail…")
+                job.update(progress=36, message="Trying the public post preview image…")
+                try:
+                    await download_public_page_preview(job_id, url, directory, base_name)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Keep query strings and source URLs out of logs.
+                    print(f"[image-preview] host={host} result=unavailable exception={type(exc).__name__}")
+                images = collect_image_files(directory)
+
+            if not images:
+                clear_directory_contents(directory)
+                job.update(progress=48, message="No public preview image found. Trying the best available video thumbnail…")
                 thumbnail_command = [
                     "yt-dlp", "--write-thumbnail", "--skip-download", "--no-playlist",
                     "--no-warnings", "--no-progress", "--socket-timeout", "15",
