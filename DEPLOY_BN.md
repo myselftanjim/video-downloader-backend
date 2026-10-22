@@ -18,7 +18,7 @@
 ## ফিচার ব্যবহার
 
 1. Downloader-এ YouTube/Facebook/Instagram/Pinterest/TikTok-এর public video link পেস্ট করে **Find qualities** চাপো। Pinterest-এর `pin.it` share link-ও দিতে পারো; না খুললে full Pin URL ব্যবহার করো.
-2. **Images** tab-এ public photo post বা Pin link দিলে original-resolution images পাওয়া গেলে সেগুলো নামাবে। একাধিক image ZIP হবে; video link হলে best available thumbnail fallback চেষ্টা করবে।
+2. **Images** tab-এ direct image CDN URL বা supported public post/Pin/gallery link দাও। Pinterest, Instagram, Facebook, TikTok, X/Twitter, Reddit, Tumblr, Flickr, Imgur, DeviantArt, Pixiv, Pexels, Unsplash, Pixabay, ArtStation, Behance, Bluesky, Wikimedia-সহ gallery-dl-supported source চেষ্টা করবে। Direct CDN-এ source/original variant আগে চেষ্টা করা হবে; একাধিক image ZIP হবে; video link হলে best available thumbnail fallback চেষ্টা করবে। কিছু extractor-এ cookies/login দরকার হতে পারে, যা shared server-এ configure করা নেই।
 3. **Converter** tab-এ নিজের video upload করে MP4/MP3 export করো.
 4. Available video quality বা MP3 নির্বাচন করো.
 5. ১০ মিনিটের কম duration হলে Trim option দেখা যাবে না। Duration ১০ মিনিট বা বেশি হলে checkbox অন করে start/end seconds দাও.

@@ -12,7 +12,7 @@ import time
 import zipfile
 from pathlib import Path
 from secrets import token_hex
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -61,6 +61,34 @@ ALLOWED_HOSTS = {
     "instagram.com",
     "tiktok.com", "vm.tiktok.com", "vt.tiktok.com",
 } | PINTEREST_DOMAINS | PINTEREST_SHORT_HOSTS
+
+# Keep image URL validation broader than video URL validation, but allowlist hosts.
+IMAGE_HOSTS = set(ALLOWED_HOSTS) | {
+    "instagr.am", "x.com", "twitter.com", "t.co", "reddit.com", "redd.it",
+    "tumblr.com", "flickr.com", "flic.kr", "imgur.com", "deviantart.com",
+    "sta.sh", "pixiv.net", "pexels.com", "unsplash.com", "pixabay.com",
+    "artstation.com", "behance.net", "500px.com", "wikimedia.org",
+    "postimg.cc", "postimages.org", "newgrounds.com", "mastodon.social",
+    "vsco.co", "weibo.com", "blogger.com", "blogspot.com", "wordpress.com",
+    "smugmug.com", "bsky.app", "bsky.social", "threads.net", "patreon.com",
+    "imagebam.com", "imgbox.com", "imgchest.com", "dropbox.com",
+}
+DIRECT_IMAGE_HOSTS = {
+    "i.pinimg.com", "images.unsplash.com", "images.pexels.com",
+    "images.pexels-cdn.com", "cdn.pixabay.com", "pbs.twimg.com",
+    "i.redd.it", "preview.redd.it", "external-preview.redd.it",
+    "i.imgur.com", "staticflickr.com", "media.tumblr.com",
+    "cdninstagram.com", "fbcdn.net", "upload.wikimedia.org",
+}
+IMAGE_SHORT_HOSTS = {
+    "pin.it", "flic.kr", "redd.it", "t.co", "youtu.be", "fb.watch",
+    "vm.tiktok.com", "vt.tiktok.com",
+}
+IMAGE_MIME_EXTENSIONS = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "image/gif": ".gif", "image/avif": ".avif", "image/bmp": ".bmp",
+    "image/tiff": ".tif",
+}
 serializer = URLSafeTimedSerializer(SESSION_SECRET or "not-configured")
 jobs = {}
 uploads = {}
@@ -220,6 +248,74 @@ async def normalize_source_url(raw: str) -> str:
     except httpx.HTTPError as exc:
         raise HTTPException(422, "Pinterest short link খোলা যায়নি। Full Pinterest pin link ব্যবহার করে দেখো।") from exc
     raise HTTPException(422, "Pinterest short link-এ অতিরিক্ত redirect হয়েছে। Full Pinterest pin link ব্যবহার করো।")
+
+
+
+
+def is_image_host(host: str) -> bool:
+    host = (host or "").lower().rstrip(".")
+    return any(host == domain or host.endswith("." + domain) for domain in IMAGE_HOSTS)
+
+
+def is_direct_image_host(host: str) -> bool:
+    host = (host or "").lower().rstrip(".")
+    return any(host == domain or host.endswith("." + domain) for domain in DIRECT_IMAGE_HOSTS)
+
+
+def validate_image_url(raw: str) -> str:
+    """Validate image/post URLs separately so the video allowlist stays narrow."""
+    value = raw.strip()
+    if len(value) > 2048:
+        raise HTTPException(400, "লিংকটি অনেক বড়।")
+    try:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        raise HTTPException(400, "সঠিক image/post URL দাও।")
+    if parsed.scheme != "https" or not host or parsed.username or parsed.password:
+        raise HTTPException(400, "শুধু অনুমোদিত public HTTPS image/post link ব্যবহার করো।")
+    if port not in (None, 443):
+        raise HTTPException(400, "এই URL-এর port অনুমোদিত নয়।")
+    if not is_image_host(host) and not is_direct_image_host(host):
+        raise HTTPException(400, "এই image platform allowlist-এ নেই। Supported public platform বা direct image CDN-এর লিংক দাও।")
+    if parsed.path in ("", "/"):
+        raise HTTPException(400, "ছবি, post, Pin বা album-এর সম্পূর্ণ লিংক দাও।")
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+
+async def normalize_image_source_url(raw: str) -> str:
+    """Resolve common share URLs and validate every redirect target."""
+    value = validate_image_url(raw)
+    initial_host = (urlsplit(value).hostname or "").lower().rstrip(".")
+    if initial_host not in IMAGE_SHORT_HOSTS:
+        return value
+    current = value
+    try:
+        timeout = httpx.Timeout(10.0, connect=5.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            for _ in range(6):
+                async with client.stream(
+                    "GET", current,
+                    headers={"Range": "bytes=0-0", "User-Agent": "Mozilla/5.0 MediaNest"},
+                ) as response:
+                    if not response.is_redirect:
+                        if initial_host == "pin.it":
+                            raise HTTPException(422, "Pinterest short link resolve করা যায়নি। Full Pin URL দিয়ে চেষ্টা করো।")
+                        return current
+                    location = response.headers.get("location")
+                    if not location:
+                        raise HTTPException(422, "Short link-এর redirect destination পাওয়া যায়নি।")
+                    target = validate_image_url(urljoin(current, location))
+                    target_host = (urlsplit(target).hostname or "").lower().rstrip(".")
+                    if initial_host == "pin.it" and not is_pinterest_host(target_host):
+                        raise HTTPException(400, "Pinterest short link অনুমোদিত Pinterest URL-এ যায়নি।")
+                    current = target
+        raise HTTPException(422, "Short link-এ অতিরিক্ত redirect হয়েছে। Full post/image URL ব্যবহার করো।")
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(422, "Short link খোলা যায়নি। Original public post URL দিয়ে চেষ্টা করো।") from exc
 
 
 def clean_expired_jobs():
@@ -510,6 +606,123 @@ async def run_image_tool(job_id: str, command: list[str], directory: Path, timeo
         job.pop("process", None)
 
 
+def direct_image_url_candidates(raw_url: str) -> list[str]:
+    """Try source-size variants first for CDNs that expose them."""
+    parsed = urlsplit(raw_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    candidates = []
+    if host == "i.pinimg.com":
+        path = re.sub(r"/(?:\d{2,4}x|\d{2,4}x\d{2,4}_RS)/", "/originals/", parsed.path, count=1)
+        if path != parsed.path:
+            candidates.append(urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, "")))
+    elif host == "images.unsplash.com":
+        transforms = {"w", "h", "fit", "crop", "auto", "q", "dpr", "fm", "force"}
+        query = urlencode([(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in transforms])
+        if query != parsed.query:
+            candidates.append(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, "")))
+    elif host == "pbs.twimg.com":
+        params = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() != "name"]
+        params.append(("name", "orig"))
+        query = urlencode(params)
+        if query != parsed.query:
+            candidates.append(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, "")))
+    elif host == "live.staticflickr.com" or host.endswith(".staticflickr.com"):
+        path = re.sub(r"_([sqtnmzwc])(?=\.[^.]+$)", "_o", parsed.path)
+        if path != parsed.path:
+            candidates.append(urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, "")))
+    elif host == "images.pexels.com":
+        transforms = {"w", "h", "fit", "auto", "cs", "dpr", "q"}
+        query = urlencode([(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in transforms])
+        if query != parsed.query:
+            candidates.append(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, "")))
+    candidates.append(raw_url)
+    return list(dict.fromkeys(candidates))
+
+
+def image_extension_from_magic(prefix: bytes) -> str | None:
+    if prefix.startswith(bytes.fromhex("ffd8ff")):
+        return ".jpg"
+    if prefix.startswith(bytes.fromhex("89504e470d0a1a0a")):
+        return ".png"
+    if prefix.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    if prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP":
+        return ".webp"
+    if prefix.startswith(bytes.fromhex("424d")):
+        return ".bmp"
+    if prefix.startswith((bytes.fromhex("49492a00"), bytes.fromhex("4d4d002a"))):
+        return ".tif"
+    if len(prefix) >= 12 and prefix[4:8] == b"ftyp" and (b"avif" in prefix[8:32] or b"avis" in prefix[8:32]):
+        return ".avif"
+    return None
+
+
+async def download_direct_image(job_id: str, raw_url: str, directory: Path, base_name: str) -> Path:
+    """Stream one direct CDN image, verify its file signature, and cap actual bytes."""
+    max_bytes = MAX_DOWNLOAD_MB * 1024 * 1024
+    for candidate in direct_image_url_candidates(raw_url):
+        part_path = directory / f".{base_name}.partial"
+        try:
+            current = validate_image_url(candidate)
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0, connect=10.0),
+                follow_redirects=False,
+                headers={"User-Agent": "Mozilla/5.0 MediaNest"},
+            ) as client:
+                for _ in range(6):
+                    async with client.stream("GET", current) as response:
+                        if response.is_redirect:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise RuntimeError("Image CDN redirect-এর destination পাওয়া যায়নি।")
+                            current = validate_image_url(urljoin(current, location))
+                            redirect_host = (urlsplit(current).hostname or "").lower().rstrip(".")
+                            if not is_direct_image_host(redirect_host):
+                                raise RuntimeError("Image CDN অননুমোদিত host-এ redirect করেছে।")
+                            continue
+                        if response.status_code < 200 or response.status_code >= 300:
+                            raise RuntimeError(f"Image source HTTP {response.status_code} দিয়েছে।")
+                        size_text = response.headers.get("content-length")
+                        try:
+                            if size_text and int(size_text) > max_bytes:
+                                raise RuntimeError(f"ছবিটি {MAX_DOWNLOAD_MB} MB সীমা ছাড়িয়ে গেছে।")
+                        except ValueError:
+                            pass
+                        iterator = response.aiter_bytes(chunk_size=64 * 1024)
+                        prefix = bytearray()
+                        while len(prefix) < 64:
+                            try:
+                                chunk = await anext(iterator)
+                            except StopAsyncIteration:
+                                break
+                            if chunk:
+                                prefix.extend(chunk)
+                        extension = image_extension_from_magic(bytes(prefix))
+                        if not extension:
+                            raise RuntimeError("এই URL বৈধ সমর্থিত image file দেয়নি।")
+                        output_path = directory / f"{base_name}{extension}"
+                        total = len(prefix)
+                        with part_path.open("wb") as output:
+                            output.write(prefix)
+                            async for chunk in iterator:
+                                total += len(chunk)
+                                if total > max_bytes:
+                                    raise RuntimeError(f"ছবিটি {MAX_DOWNLOAD_MB} MB সীমা ছাড়িয়ে গেছে।")
+                                output.write(chunk)
+                        part_path.replace(output_path)
+                        job = jobs.get(job_id)
+                        if job:
+                            job.update(progress=80, message="Original/source image download complete…")
+                        return output_path
+            raise RuntimeError("Image CDN-এর redirect সীমা অতিক্রম করেছে।")
+        except HTTPException:
+            part_path.unlink(missing_ok=True)
+        except (httpx.HTTPError, OSError, RuntimeError):
+            part_path.unlink(missing_ok=True)
+    raise RuntimeError("সরাসরি image download ব্যর্থ হয়েছে। URL expired, size limit-এর বাইরে, বা source থেকে blocked হতে পারে.")
+
+
+
 async def process_image_download(job_id: str, url: str, requested_name: str):
     """Prefer original image gallery files; fall back to the best extractor thumbnail."""
     job = jobs[job_id]
@@ -518,44 +731,47 @@ async def process_image_download(job_id: str, url: str, requested_name: str):
     base_name = safe_image_basename(requested_name)
     max_bytes = MAX_DOWNLOAD_MB * 1024 * 1024
     try:
-        job.update(progress=8, message="Looking for original, full-resolution images…")
-        gallery_filter = "extension in ('jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp', 'tif', 'tiff')"
-        gallery_command = [
-            "gallery-dl", "--no-input", "--quiet",
-            "--directory", str(directory),
-            "--filename", "{num:>03}.{extension}",
-            "--range", f"1-{MAX_IMAGE_FILES}",
-            "--filter", gallery_filter,
-            url,
-        ]
-        gallery_error = ""
-        try:
-            _, gallery_error = await run_image_tool(job_id, gallery_command, directory)
-        except asyncio.CancelledError:
-            raise
-        except RuntimeError as exc:
-            gallery_error = str(exc)
-            if "15-minute limit" in gallery_error or "processing limit" in gallery_error:
-                raise
-
-        images = collect_image_files(directory)
-        if not images:
-            clear_directory_contents(directory)
-            job.update(progress=48, message="No original image set found. Trying the best available image thumbnail…")
-            thumbnail_command = [
-                "yt-dlp", "--write-thumbnail", "--skip-download", "--no-playlist",
-                "--no-warnings", "--no-progress", "--socket-timeout", "15",
-                "--retries", "1", "--fragment-retries", "1",
-                "-P", str(directory), "-o", "%(title).120B.%(ext)s", url,
+        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+        if is_direct_image_host(host):
+            job.update(progress=12, message="Trying original-size image URL…")
+            images = [await download_direct_image(job_id, url, directory, base_name)]
+        else:
+            job.update(progress=8, message="Looking for original, full-resolution images…")
+            gallery_filter = "extension in ('jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp', 'tif', 'tiff')"
+            gallery_command = [
+                "gallery-dl", "--no-input", "--quiet",
+                "--directory", str(directory),
+                "--filename", "{num:>03}.{extension}",
+                "--range", f"1-{MAX_IMAGE_FILES}",
+                "--filter", gallery_filter,
+                url,
             ]
             try:
-                _, _ = await run_image_tool(job_id, thumbnail_command, directory)
+                _, _gallery_error = await run_image_tool(job_id, gallery_command, directory)
             except asyncio.CancelledError:
                 raise
             except RuntimeError as exc:
                 if "15-minute limit" in str(exc) or "processing limit" in str(exc):
                     raise
+
             images = collect_image_files(directory)
+            if not images:
+                clear_directory_contents(directory)
+                job.update(progress=48, message="No original image set found. Trying the best available image thumbnail…")
+                thumbnail_command = [
+                    "yt-dlp", "--write-thumbnail", "--skip-download", "--no-playlist",
+                    "--no-warnings", "--no-progress", "--socket-timeout", "15",
+                    "--retries", "1", "--fragment-retries", "1",
+                    "-P", str(directory), "-o", "%(title).120B.%(ext)s", url,
+                ]
+                try:
+                    _, _ = await run_image_tool(job_id, thumbnail_command, directory)
+                except asyncio.CancelledError:
+                    raise
+                except RuntimeError as exc:
+                    if "15-minute limit" in str(exc) or "processing limit" in str(exc):
+                        raise
+                images = collect_image_files(directory)
 
         if not images:
             raise RuntimeError(
@@ -1297,7 +1513,7 @@ async def download_images(body: ImageDownloadBody):
     clean_expired_jobs()
     if any(job.get("status") == "running" for job in jobs.values()):
         raise HTTPException(429, "একটি কাজ চলছে। সেটি শেষ হলে আবার চেষ্টা করো।")
-    url = await normalize_source_url(body.url)
+    url = await normalize_image_source_url(body.url)
     job_id = token_hex(10)
     requested_name = safe_image_basename(body.download_name or "MediaNest Images")
     jobs[job_id] = {
