@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -74,6 +75,20 @@ class ConvertBody(BaseModel):
     download_name: str | None = Field(default=None, max_length=180)
     trim_start: float | None = Field(default=None, ge=0, le=14400)
     trim_end: float | None = Field(default=None, gt=0, le=14400)
+
+
+def signal_job_process(proc, force=False):
+    """Signal a managed subprocess and any children started in its session."""
+    if proc is None or proc.returncode is not None:
+        return
+    requested_signal = signal.SIGKILL if force else signal.SIGTERM
+    try:
+        os.killpg(proc.pid, requested_signal)
+    except (ProcessLookupError, PermissionError, AttributeError):
+        try:
+            (proc.kill if force else proc.terminate)()
+        except ProcessLookupError:
+            pass
 
 
 def require_session(request: Request):
@@ -347,7 +362,8 @@ async def process_local_conversion(job_id: str, media_id: str, quality: str,
                     "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-b:a", "160k",
                     "-movflags", "+faststart", str(output_path)]
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            start_new_session=True
         )
         job["process"] = proc
         duration = max(1.0, (trim[1] - trim[0]) if trim else float(source["duration"] or 1))
@@ -472,7 +488,8 @@ async def _process_download_ytdlp(job_id, url, quality, output_format, trim):
 
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True
                 )
             except FileNotFoundError:
                 raise RuntimeError("সার্ভারে yt-dlp ইনস্টল নেই।")
@@ -907,11 +924,12 @@ async def cancel_job(job_id: str):
     proc = job.get("process")
     if proc is not None and proc.returncode is None:
         try:
-            proc.terminate()
-            await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            signal_job_process(proc, force=False)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                signal_job_process(proc, force=True)
+                await proc.wait()
         except ProcessLookupError:
             pass
 
