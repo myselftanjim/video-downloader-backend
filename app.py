@@ -875,3 +875,41 @@ async def _clipnest_optional_cobalt_smoke_test():
 
     asyncio.create_task(run_once())
 
+
+@app.on_event("startup")
+async def _clipnest_optional_ytdlp_smoke_test():
+    # Set YTDLP_SMOKE_TEST_URL only for a one-off deployment test. The test
+    # fetches metadata and downloads only a five-second sample, then deletes it.
+    test_url = os.getenv("YTDLP_SMOKE_TEST_URL", "").strip()
+    if not test_url:
+        return
+
+    async def run_once():
+        job_id = "smoke-" + token_hex(6)
+        try:
+            test_url_validated = validate_url(test_url)
+            info = await asyncio.to_thread(call_ytdlp_info, test_url_validated)
+            duration = info.get("duration")
+            sample_end = min(5.0, float(duration)) if duration and float(duration) > 0 else 5.0
+            if sample_end < 0.5:
+                raise RuntimeError("The test video is too short for a download sample.")
+            jobs[job_id] = {
+                "id": job_id, "status": "running", "progress": 0, "message": "Smoke test",
+                "created_at": time.time(), "output_file": None, "filename": None,
+            }
+            await _process_download_ytdlp(job_id, test_url_validated, "360", "mp4", (0.0, sample_end))
+            result = jobs.get(job_id) or {}
+            if result.get("status") != "completed" or not result.get("output_file"):
+                raise RuntimeError(result.get("message") or "No test output file was produced.")
+            path = Path(result["output_file"])
+            if not path.is_file() or path.stat().st_size == 0:
+                raise RuntimeError("Test output file was missing or empty.")
+            print(f"[yt-dlp-smoke-test] PASS metadata_and_{sample_end:g}s_media_download bytes={path.stat().st_size}")
+        except Exception as exc:
+            print(f"[yt-dlp-smoke-test] FAIL {type(exc).__name__}: {str(exc)[:220]}")
+        finally:
+            jobs.pop(job_id, None)
+            shutil.rmtree(TEMP_ROOT / job_id, ignore_errors=True)
+
+    asyncio.create_task(run_once())
+
