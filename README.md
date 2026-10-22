@@ -7,7 +7,7 @@ A password-protected media utility for personal/family use (a few people). Built
 ## Features
 
 - Password-protected access code with signed HTTP-only session cookie and basic login throttling.
-- Video metadata lookup and format/quality selection for supported public YouTube, Facebook, Instagram and TikTok URLs.
+- Video metadata lookup and format/quality selection for supported public YouTube, Facebook, Instagram, Pinterest and TikTok URLs, including Pinterest `pin.it` share links.
 - MP4 video and MP3 audio download for accessible sources, subject to source availability and platform rules.
 - Local video upload fallback (MP4, MOV, MKV, WebM, AVI, M4V, MPEG, MPG, 3GP) up to 90 MB, useful when a platform blocks cloud-server extraction.
 - Local upload conversion into MP4/MP3, optional resolution downscale, and Trim only when video duration is at least 10 minutes.
