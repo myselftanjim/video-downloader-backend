@@ -208,6 +208,8 @@ async def normalize_source_url(raw: str) -> str:
                     current = target
     except HTTPException:
         raise
+    except ValueError as exc:
+        raise HTTPException(400, "Pinterest short link-এ ভুল URL পাওয়া গেছে।") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(422, "Pinterest short link খোলা যায়নি। Full Pinterest pin link ব্যবহার করে দেখো।") from exc
     raise HTTPException(422, "Pinterest short link-এ অতিরিক্ত redirect হয়েছে। Full Pinterest pin link ব্যবহার করো।")
@@ -372,6 +374,16 @@ def call_ytdlp_info(url: str) -> dict:
     if is_youtube:
         raise HTTPException(422, "YouTube থেকে usable player response পাওয়া যায়নি—default এবং alternate player-client দুটোই চেষ্টা করা হয়েছে। এটি শুধু পুরোনো extractor/runtime-এর সমস্যা নয়; YouTube-এর response, network restriction বা ওই ভিডিওর access policy কারণ হতে পারে। এই hosting থেকে লিংকটি এখন সরাসরি প্রসেস করা যাচ্ছে না।")
     raise HTTPException(422, "ভিডিওর তথ্য আনা যায়নি। URL public ও accessible কি না যাচাই করো; কিছু প্ল্যাটফর্ম cloud request সীমিত করে বা extractor support পরিবর্তন করে।")
+
+
+def ensure_pinterest_video(url: str, info: dict):
+    """Reject regular image Pins instead of offering a misleading video download."""
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    if is_pinterest_host(host) and not info.get("formats") and not info.get("url"):
+        raise HTTPException(
+            422,
+            "এই Pinterest Pin-এ downloadable video পাওয়া যায়নি। Video Pin-এর link ব্যবহার করো; সাধারণ image Pin সমর্থিত নয়।",
+        )
 
 
 def duration_text(value):
@@ -964,6 +976,7 @@ async def info(body: URLBody):
     url = await normalize_source_url(body.url)
     try:
         data = await asyncio.to_thread(call_ytdlp_info, url)
+        ensure_pinterest_video(url, data)
         return shape_info(data)
     except HTTPException as exc:
         host = (urlsplit(url).hostname or "").lower()
@@ -1055,6 +1068,7 @@ async def download(body: DownloadBody):
     if any(job.get("status") == "running" for job in jobs.values()):
         raise HTTPException(429, "একটি কাজ চলছে। সেটি শেষ হলে আবার চেষ্টা করো।")
     info = await asyncio.to_thread(call_ytdlp_info, url)
+    ensure_pinterest_video(url, info)
     shaped = shape_info(info)
     trim = validate_trim(body, shaped["duration"])
     job_id = token_hex(10)
