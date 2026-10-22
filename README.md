@@ -1,4 +1,6 @@
-# ClipNest — Personal Video Tool
+# MediaNest — Personal Video Tool
+
+**Built by ReelsByTanjim.**
 
 A password-protected media utility for personal/family use (a few people). Built with FastAPI, yt-dlp, FFmpeg and a responsive browser UI.
 
@@ -28,7 +30,7 @@ Never commit environment secrets to GitHub.
 
 ## Known limitations
 
-- YouTube may reject requests from shared cloud IPs with “Sign in to confirm you're not a bot.” ClipNest now displays a plain-language explanation. It does not bypass bot checks or authentication controls. For videos you own, use YouTube Studio or Google Takeout to download the file, then upload the file into ClipNest for processing.
+- YouTube may reject requests from shared cloud IPs with “Sign in to confirm you're not a bot.” MediaNest now displays a plain-language explanation. It does not bypass bot checks or authentication controls. For videos you own, use YouTube Studio or Google Takeout to download the file, then upload the file into MediaNest for processing.
 - Other social platforms can change page formats, require login, rate-limit requests, or disallow downloads. Not every URL is guaranteed to work.
 - Render Free sleeps after inactivity and has limited CPU/RAM plus ephemeral disk. FFmpeg, long videos, large uploads and 4K processing can fail or time out; 24/7 uptime is not guaranteed.
 - Uploaded and generated files are temporary. The app supports only MP4/MP3 output in this version. Actual output quality depends on available source media and server capacity.
