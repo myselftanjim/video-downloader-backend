@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-TEMP_ROOT = Path(tempfile.gettempdir()) / "clipnest-jobs"
+TEMP_ROOT = Path(tempfile.gettempdir()) / "medianest-jobs"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +47,7 @@ jobs = {}
 uploads = {}
 login_attempts = {}
 
-app = FastAPI(title="ClipNest", docs_url=None, redoc_url=None)
+app = FastAPI(title="MediaNest", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -687,7 +687,7 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "app": "clipnest"}
+    return {"status": "ok", "app": "medianest"}
 
 
 @app.get("/api/session")
