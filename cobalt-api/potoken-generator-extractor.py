@@ -102,13 +102,21 @@ class PotokenExtractor:
 
     @staticmethod
     async def _click_on_player(tab: nodriver.Tab) -> bool:
-        try:
-            player = await tab.select("#movie_player", 10)
-        except asyncio.TimeoutError:
-            logger.warning("update failed: unable to locate video player")
-            return False
-        await player.click()
-        return True
+        # Prefer the actual YouTube play control; clicking the outer player
+        # container may not start playback in a virtual display.
+        for selector in ("button.ytp-large-play-button", ".ytp-play-button", "#movie_player"):
+            try:
+                player = await tab.select(selector, 10)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                await player.click()
+                await asyncio.sleep(2)
+                return True
+            except Exception as exc:
+                logger.debug("player click failed for %s: %s", selector, type(exc).__name__)
+        logger.warning("update failed: unable to click a video play control")
+        return False
 
     async def _wait_for_handler(self) -> bool:
         try:
