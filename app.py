@@ -391,69 +391,110 @@ async def _process_download_ytdlp(job_id, url, quality, output_format, trim):
     directory = TEMP_ROOT / job_id
     directory.mkdir(parents=True, exist_ok=True)
     try:
-        template = str(directory / "clip.%(ext)s")
-        cmd = [
-            "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno", "--remote-components", "ejs:npm",
-            "--extractor-args", "youtube:player_client=web,mweb,tv",
-            "--newline", "--no-warnings", "--no-playlist",
-            "--socket-timeout", "15", "--retries", "1", "--fragment-retries", "1",
-            "--max-filesize", f"{MAX_DOWNLOAD_MB}M",
-            "--progress-template", "download:__PCT__%(progress._percent_str)s",
-            "--print", "after_move:__FILE__%(filepath)s", "-o", template,
-        ]
-        if output_format == "mp3":
-            cmd += ["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "192K"]
-        else:
-            selector = "bestvideo+bestaudio/best" if quality == "best" else f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
-            cmd += ["-f", selector, "--merge-output-format", "mp4"]
-        if trim:
-            cmd += ["--download-sections", f"*{ts(trim[0])}-{ts(trim[1])}", "--force-keyframes-at-cuts"]
-        cmd.append(url)
+        host = (urlsplit(url).hostname or "").lower()
+        is_youtube = host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
+        player_clients = [
+            "web,mweb,tv",
+            "web_safari,web_embedded,-tv_downgraded",
+            "tv,web_safari",
+        ] if is_youtube else [None]
+        last_error = "ডাউনলোড ব্যর্থ হয়েছে।"
+        for attempt_index, client_combo in enumerate(player_clients, start=1):
+            # Remove partial files before retrying with a different player client.
+            for old_path in list(directory.iterdir()):
+                if old_path.is_dir():
+                    shutil.rmtree(old_path, ignore_errors=True)
+                else:
+                    try:
+                        old_path.unlink()
+                    except FileNotFoundError:
+                        pass
+            job["candidate"] = None
+            job["progress"] = 0
+            template = str(directory / "clip.%(ext)s")
+            cmd = [
+                "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno",
+                "--remote-components", "ejs:npm",
+                "--newline", "--no-warnings", "--no-playlist",
+                "--socket-timeout", "15", "--retries", "1", "--fragment-retries", "1",
+                "--max-filesize", f"{MAX_DOWNLOAD_MB}M",
+                "--progress-template", "download:__PCT__%(progress._percent_str)s",
+                "--print", "after_move:__FILE__%(filepath)s",
+            ]
+            if client_combo:
+                cmd += ["--extractor-args", f"youtube:player_client={client_combo}"]
+            if output_format == "mp3":
+                cmd += ["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", "192K"]
+            else:
+                selector = "bestvideo+bestaudio/best" if quality == "best" else f"bestvideo[height<={quality}]+bestaudio/best[height<={quality}]"
+                cmd += ["-f", selector, "--merge-output-format", "mp4"]
+            if trim:
+                cmd += ["--download-sections", f"*{ts(trim[0])}-{ts(trim[1])}", "--force-keyframes-at-cuts"]
+            cmd += ["-o", template, url]
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        job["process"] = proc
-        async def read_stdout():
-            async for raw in proc.stdout:
-                line = raw.decode("utf-8", "replace").strip()
-                if line.startswith("__PCT__"):
-                    match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%", line)
-                    if match:
-                        job["progress"] = min(99, float(match.group(1)))
-                elif line.startswith("__FILE__"):
-                    job["candidate"] = line[len("__FILE__"):].strip()
-        out_task = asyncio.create_task(read_stdout())
-        err_task = asyncio.create_task(proc.stderr.read())
-        try:
-            code = await asyncio.wait_for(proc.wait(), timeout=15 * 60)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise RuntimeError("১৫ মিনিটের processing সীমা শেষ হয়েছে। ছোট ভিডিও বা কম quality বেছে নাও।")
-        await out_task
-        error = (await err_task).decode("utf-8", "replace")
-        if code != 0:
-            message = next((ln.strip() for ln in reversed(error.splitlines()) if ln.strip()), "ডাউনলোড ব্যর্থ হয়েছে।")
-            raise RuntimeError(message[:450])
-        base = directory.resolve()
-        candidate = Path(job.get("candidate") or "").resolve()
-        if not candidate.is_relative_to(base) or not candidate.is_file():
-            found = [p.resolve() for p in directory.iterdir() if p.is_file() and not p.name.endswith((".part", ".ytdl"))]
-            candidate = found[0] if found else None
-        if not candidate or not candidate.is_relative_to(base) or not candidate.is_file():
-            raise RuntimeError("Output ফাইল পাওয়া যায়নি। আবার চেষ্টা করো।")
-        if candidate.stat().st_size > MAX_DOWNLOAD_MB * 1024 * 1024:
-            raise RuntimeError(f"ফাইল {MAX_DOWNLOAD_MB} MB সীমা ছাড়িয়েছে। কম quality বেছে নাও।")
-        job.update(status="completed", progress=100, message="ফাইল প্রস্তুত।", output_file=str(candidate),
-                   filename="clip.mp3" if output_format == "mp3" else "clip.mp4")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+            except FileNotFoundError:
+                raise RuntimeError("সার্ভারে yt-dlp ইনস্টল নেই।")
+            job["process"] = proc
+
+            async def read_stdout():
+                async for raw in proc.stdout:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if line.startswith("__PCT__"):
+                        match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%", line)
+                        if match:
+                            job["progress"] = min(99, float(match.group(1)))
+                    elif line.startswith("__FILE__"):
+                        job["candidate"] = line[len("__FILE__"):].strip()
+
+            out_task = asyncio.create_task(read_stdout())
+            err_task = asyncio.create_task(proc.stderr.read())
+            try:
+                code = await asyncio.wait_for(proc.wait(), timeout=15 * 60)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                await out_task
+                stderr = (await err_task).decode("utf-8", "replace")
+                last_error = "১৫ মিনিটের processing সীমা শেষ হয়েছে। ছোট ভিডিও বা কম quality বেছে নাও।"
+                print(f"[yt-dlp-download] attempt={attempt_index} result=timeout")
+                continue
+            await out_task
+            stderr = (await err_task).decode("utf-8", "replace")
+            base = directory.resolve()
+            candidate = Path(job.get("candidate") or "").resolve()
+            if not candidate.is_relative_to(base) or not candidate.is_file():
+                found = [
+                    p.resolve() for p in directory.iterdir()
+                    if p.is_file() and not p.name.endswith((".part", ".ytdl"))
+                ]
+                candidate = found[0] if found else None
+            if code == 0 and candidate and candidate.is_relative_to(base) and candidate.is_file():
+                if candidate.stat().st_size > MAX_DOWNLOAD_MB * 1024 * 1024:
+                    last_error = f"ফাইল {MAX_DOWNLOAD_MB} MB সীমা ছাড়িয়েছে। কম quality বেছে নাও।"
+                    break
+                job.update(
+                    status="completed", progress=100, message="ফাইল প্রস্তুত।",
+                    output_file=str(candidate),
+                    filename="clip.mp3" if output_format == "mp3" else "clip.mp4",
+                )
+                print(f"[yt-dlp-download] attempt={attempt_index} result=success")
+                return
+
+            last_line = next((ln.strip() for ln in reversed(stderr.splitlines()) if ln.strip()), "ডাউনলোড ব্যর্থ হয়েছে।")
+            last_error = last_line[:450]
+            print(f"[yt-dlp-download] attempt={attempt_index} result=failed reason={last_error[:220]}")
+            if not is_youtube:
+                break
+        raise RuntimeError(last_error)
     except Exception as exc:
         shutil.rmtree(directory, ignore_errors=True)
         job.update(status="failed", progress=0, message=str(exc)[:500], output_file=None)
     finally:
         job.pop("process", None)
-
-
 
 def cobalt_enabled():
     return bool(COBALT_API_URL and COBALT_API_KEY)
