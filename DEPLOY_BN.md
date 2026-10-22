@@ -17,7 +17,7 @@
 
 ## ফিচার ব্যবহার
 
-1. YouTube/Facebook/Instagram/TikTok-এর public link পেস্ট করে **Find qualities** চাপো।
+1. YouTube/Facebook/Instagram/Pinterest/TikTok-এর public video link পেস্ট করে **Find qualities** চাপো। Pinterest-এর `pin.it` share link-ও দিতে পারো; না খুললে full Pin URL ব্যবহার করো।
 2. Available video quality বা MP3 নির্বাচন করো।
 3. ১০ মিনিটের কম duration হলে Trim option দেখা যাবে না। Duration ১০ মিনিট বা বেশি হলে checkbox অন করে start/end seconds দাও।
 4. **Prepare download** চাপো; কাজ শেষ হলে Download বাটন আসবে।
