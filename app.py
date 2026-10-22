@@ -122,34 +122,69 @@ def clean_expired_jobs():
 
 
 def call_ytdlp_info(url: str) -> dict:
-    cmd = [
-        "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno", "--dump-single-json", "--skip-download", "--no-warnings",
-        "--no-playlist", "--socket-timeout", "12", "--retries", "1",
-        "--fragment-retries", "1", "--no-cache-dir", url,
-    ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=70, check=False)
-    except subprocess.TimeoutExpired:
-        raise HTTPException(504, "ভিডিওর তথ্য আনতে সময় শেষ হয়েছে। পরে আবার চেষ্টা করো।")
-    if result.returncode or not result.stdout.strip():
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        raise HTTPException(400, "সঠিক ভিডিও লিংক দাও।")
+    is_youtube = host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
+
+    base = [
+        "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno",
+        "--remote-components", "ejs:npm",
+        "--dump-single-json", "--skip-download", "--no-warnings",
+        "--no-playlist", "--socket-timeout", "12", "--retries", "1",
+        "--fragment-retries", "1", "--no-cache-dir",
+    ]
+    attempts = [("default", base + [url])]
+    if is_youtube:
+        # Try a second, documented client combination if YouTube's default
+        # player response cannot be parsed.
+        attempts.append((
+            "alternate_player_clients",
+            base + ["--extractor-args", "youtube:player_client=web,mweb,tv", url]
+        ))
+
+    stderr_parts = []
+    for attempt_name, cmd in attempts:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=70, check=False)
+        except subprocess.TimeoutExpired:
+            stderr_parts.append(f"{attempt_name}: timeout")
+            continue
+        except FileNotFoundError:
+            raise HTTPException(503, "সার্ভারে yt-dlp ইনস্টল নেই।")
+
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                data = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                stderr_parts.append(f"{attempt_name}: invalid JSON")
+                continue
+            data["_clipnest_extraction_attempt"] = attempt_name
+            if data.get("is_live"):
+                raise HTTPException(422, "লাইভ ভিডিও এই টুলে সমর্থিত নয়।")
+            return data
+
         raw_error = result.stderr or ""
         lowered = raw_error.lower()
         if "sign in to confirm you're not a bot" in lowered or "confirm you're not a bot" in lowered:
-            raise HTTPException(422, "YouTube এই cloud server-এর request-এ verification চাইছে, তাই এই লিংকটি এখন সরাসরি প্রসেস করা যাচ্ছে না। আমরা verification bypass করি না। ভিডিওটি নিজের হলে YouTube Studio বা Google Takeout থেকে ফাইলটি ডাউনলোড করে নিচের ‘Upload a video’ অংশে দিলে Trim/MP3/MP4 করা যাবে।")
+            raise HTTPException(422, "YouTube এই cloud server-এ bot verification চাইছে। এই যাচাইকরণ bypass করা হবে না। নিজের ভিডিও হলে YouTube Studio/Google Takeout থেকে ফাইল নিয়ে ‘Upload a video’ দিয়ে প্রসেস করো।")
         if "private video" in lowered or "login required" in lowered or "sign in to confirm" in lowered:
-            raise HTTPException(422, "এই ভিডিওটি private বা login/verification চাইছে। অ্যাপ এই access control bypass করবে না। public/অনুমোদিত লিংক ব্যবহার করো, অথবা নিজের ভিডিও official পদ্ধতিতে ডাউনলোড করে Upload অপশন ব্যবহার করো।")
-        if "failed to extract any player response" in lowered or "unable to extract any player response" in lowered or "unable to extract yt initial data" in lowered:
-            raise HTTPException(422, "YouTube থেকে ভিডিওর তথ্য পড়া যাচ্ছে না। Extractor-এর version/runtime update করা হয়েছে, কিন্তু YouTube যদি cloud server-কে response না দেয়, তাহলে এই লিংক সরাসরি কাজ নাও করতে পারে। নিজের ভিডিও হলে YouTube Studio/Google Takeout থেকে নামিয়ে ‘Upload a video’ অংশে দাও।")
-        if "unsupported url" in lowered:
-            raise HTTPException(422, "এই লিংকটি সমর্থিত নয়। URL সঠিক কি না এবং ভিডিওটি public কি না যাচাই করো।")
-        raise HTTPException(422, "ভিডিওর তথ্য আনা যায়নি। লিংকটি public, accessible এবং এই server থেকে উপলভ্য কি না যাচাই করো। কিছু প্ল্যাটফর্ম cloud request সীমিত করতে পারে।")
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise HTTPException(502, "উৎস থেকে সঠিক ভিডিও তথ্য পাওয়া যায়নি।")
-    if data.get("is_live"):
-        raise HTTPException(422, "লাইভ ভিডিও এই টুলে সমর্থিত নয়।")
-    return data
+            raise HTTPException(422, "এই ভিডিওটি private অথবা login/verification চাইছে। অ্যাপ এই access control bypass করবে না। অনুমতিপ্রাপ্ত public link ব্যবহার করো, অথবা নিজের ভিডিও official পদ্ধতিতে নামিয়ে Upload করো।")
+
+        # Keep diagnostics private in server logs: no full URL or query parameters.
+        tail = next((line.strip() for line in reversed(raw_error.splitlines()) if line.strip()), "no stderr")
+        stderr_parts.append(f"{attempt_name}: exit={result.returncode}; {tail[:220]}")
+
+    safe_diagnostic = " | ".join(stderr_parts)[:700]
+    print(f"[extractor] platform={'youtube' if is_youtube else 'other'} result=failed diagnostic={safe_diagnostic}")
+
+    combined = " ".join(stderr_parts).lower()
+    if "all player responses are invalid" in combined or "ip is likely being blocked" in combined or "http error 403" in combined:
+        raise HTTPException(422, "YouTube-এর response এই cloud server-এ block/deny হচ্ছে বলে মনে হচ্ছে। Updated yt-dlp, Deno ও alternate player clients—সব চেষ্টা ব্যর্থ হয়েছে। তাই এই Render server থেকে এই লিংক সরাসরি আনা যাচ্ছে না। নিজের ভিডিও হলে official পদ্ধতিতে নামিয়ে Upload করো; অন্যথায় সরাসরি media URL বা অনুমোদিত download source ব্যবহার করো।")
+    if is_youtube:
+        raise HTTPException(422, "YouTube থেকে usable player response পাওয়া যায়নি—default এবং alternate player-client দুটোই চেষ্টা করা হয়েছে। এটি শুধু পুরোনো extractor/runtime-এর সমস্যা নয়; YouTube-এর response, network restriction বা ওই ভিডিওর access policy কারণ হতে পারে। এই hosting থেকে লিংকটি এখন সরাসরি প্রসেস করা যাচ্ছে না।")
+    raise HTTPException(422, "ভিডিওর তথ্য আনা যায়নি। URL public ও accessible কি না যাচাই করো; কিছু প্ল্যাটফর্ম cloud request সীমিত করে বা extractor support পরিবর্তন করে।")
 
 
 def duration_text(value):
@@ -344,7 +379,9 @@ async def process_download(job_id, url, quality, output_format, trim):
     try:
         template = str(directory / "clip.%(ext)s")
         cmd = [
-            "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno", "--newline", "--no-warnings", "--no-playlist",
+            "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno", "--remote-components", "ejs:npm",
+            "--extractor-args", "youtube:player_client=web,mweb,tv",
+            "--newline", "--no-warnings", "--no-playlist",
             "--socket-timeout", "15", "--retries", "1", "--fragment-retries", "1",
             "--max-filesize", f"{MAX_DOWNLOAD_MB}M",
             "--progress-template", "download:__PCT__%(progress._percent_str)s",
