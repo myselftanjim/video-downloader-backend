@@ -1,4 +1,6 @@
-# ClipNest সেটআপ গাইড (বাংলা)
+# MediaNest সেটআপ গাইড (বাংলা)
+
+**তৈরি করেছে: ReelsByTanjim**
 
 ## GitHub ও Render
 
@@ -11,7 +13,7 @@
 5. `APP_PASSWORD` নামে একটি environment variable সেট করো। এটি পরিবারে ভাগ করা দীর্ঘ, আলাদা access code হবে।
 6. `SESSION_SECRET` নামে environment variable হিসেবে long random value সেট করো (Blueprint ব্যবহার করলে Render-generated secret ব্যবহার করো)।
 7. Optional: `MAX_DOWNLOAD_MB=400` রাখো।
-8. Deploy শেষ হলে `https://YOUR-SERVICE.onrender.com/health` খুলে `{"status":"ok","app":"clipnest"}` দেখো। Homepage খুলে access code দিয়ে লগইন করো।
+8. Deploy শেষ হলে `https://YOUR-SERVICE.onrender.com/health` খুলে `{"status":"ok","app":"medianest"}` দেখো। Homepage খুলে access code দিয়ে লগইন করো।
 
 ## ফিচার ব্যবহার
 
