@@ -214,6 +214,25 @@ def duration_text(value):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
 
 
+def safe_download_filename(title: str, output_format: str) -> str:
+    """Build a safe, readable download name from the actual media title."""
+    name = str(title or "").strip()
+    # Remove a trailing media extension so we do not produce names like video.mp4.mp4.
+    if Path(name).suffix.lower() in {".mp4", ".mp3", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".mpeg", ".mpg", ".3gp"}:
+        name = Path(name).stem
+    # Preserve Unicode titles (including Bangla), while replacing path separators,
+    # control characters and characters that are invalid on common desktop systems.
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f]+', "-", name)
+    name = re.sub(r"\s+", " ", name).strip(" .-")
+    name = name[:120].rstrip(" .-")
+    if not name or name in {".", ".."}:
+        name = "MediaNest Download"
+    if name.upper() in {"CON", "PRN", "AUX", "NUL"} or re.fullmatch(r"(?:COM|LPT)[1-9]", name.upper()):
+        name = "_" + name
+    extension = "mp3" if output_format == "mp3" else "mp4"
+    return f"{name}.{extension}"
+
+
 def shape_info(info: dict):
     formats = info.get("formats") or []
     heights = set()
@@ -357,7 +376,7 @@ async def process_local_conversion(job_id: str, media_id: str, quality: str,
         if output_path.stat().st_size > MAX_DOWNLOAD_MB * 1024 * 1024:
             raise RuntimeError(f"তৈরি ফাইল {MAX_DOWNLOAD_MB} MB সীমা ছাড়িয়েছে। কম resolution বেছে নাও।")
         job.update(status="completed", progress=100, message="ফাইল প্রস্তুত।",
-                   output_file=str(output_path), filename=output_path.name, upload_id=media_id)
+                   output_file=str(output_path), filename=job.get("filename") or output_path.name, upload_id=media_id)
     except Exception as exc:
         shutil.rmtree(directory, ignore_errors=True)
         job.update(status="failed", progress=0, message=str(exc)[:500], output_file=None)
@@ -484,7 +503,7 @@ async def _process_download_ytdlp(job_id, url, quality, output_format, trim):
                 job.update(
                     status="completed", progress=100, message="ফাইল প্রস্তুত।",
                     output_file=str(candidate),
-                    filename="clip.mp3" if output_format == "mp3" else "clip.mp4",
+                    filename=job.get("filename") or ("clip.mp3" if output_format == "mp3" else "clip.mp4"),
                 )
                 print(f"[yt-dlp-download] attempt={attempt_index} result=success")
                 return
@@ -637,7 +656,7 @@ async def process_cobalt_download(job_id, url, quality, output_format):
         job.update(
             status="completed", progress=100, message="ফাইল প্রস্তুত।",
             output_file=str(output_path),
-            filename="clip.mp3" if output_format == "mp3" else "clip.mp4",
+            filename=job.get("filename") or safe_name or ("clip.mp3" if output_format == "mp3" else "clip.mp4"),
         )
     except Exception as exc:
         shutil.rmtree(directory, ignore_errors=True)
@@ -806,8 +825,11 @@ async def convert_uploaded(body: ConvertBody):
     if body.output_format == "mp3" and not source.get("has_audio"):
         raise HTTPException(400, "এই ভিডিওতে audio track নেই।")
     job_id = token_hex(10)
+    source_title = Path(source.get("filename") or "Uploaded video").stem
     jobs[job_id] = {"id": job_id, "status": "running", "progress": 0, "message": "Conversion শুরু হচ্ছে…",
-                    "created_at": time.time(), "output_file": None, "filename": None, "upload_id": body.media_id}
+                    "created_at": time.time(), "output_file": None,
+                    "title": source_title, "filename": safe_download_filename(source_title, body.output_format),
+                    "upload_id": body.media_id}
     asyncio.create_task(process_local_conversion(job_id, body.media_id, body.quality, body.output_format, trim))
     return {"job_id": job_id, "status": "running"}
 
@@ -822,8 +844,10 @@ async def download(body: DownloadBody):
     shaped = shape_info(info)
     trim = validate_trim(body, shaped["duration"])
     job_id = token_hex(10)
+    source_title = shaped.get("title") or "MediaNest Download"
     jobs[job_id] = {"id": job_id, "status": "running", "progress": 0, "message": "কাজ শুরু হচ্ছে…",
-                    "created_at": time.time(), "output_file": None, "filename": None}
+                    "created_at": time.time(), "output_file": None,
+                    "title": source_title, "filename": safe_download_filename(source_title, body.output_format)}
     asyncio.create_task(process_download(job_id, url, body.quality, body.output_format, trim))
     return {"job_id": job_id, "status": "running"}
 
