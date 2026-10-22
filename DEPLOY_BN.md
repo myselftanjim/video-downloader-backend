@@ -17,10 +17,12 @@
 
 ## ফিচার ব্যবহার
 
-1. YouTube/Facebook/Instagram/Pinterest/TikTok-এর public video link পেস্ট করে **Find qualities** চাপো। Pinterest-এর `pin.it` share link-ও দিতে পারো; না খুললে full Pin URL ব্যবহার করো।
-2. Available video quality বা MP3 নির্বাচন করো।
-3. ১০ মিনিটের কম duration হলে Trim option দেখা যাবে না। Duration ১০ মিনিট বা বেশি হলে checkbox অন করে start/end seconds দাও।
-4. **Prepare download** চাপো; কাজ শেষ হলে Download বাটন আসবে।
+1. Downloader-এ YouTube/Facebook/Instagram/Pinterest/TikTok-এর public video link পেস্ট করে **Find qualities** চাপো। Pinterest-এর `pin.it` share link-ও দিতে পারো; না খুললে full Pin URL ব্যবহার করো.
+2. **Images** tab-এ public photo post বা Pin link দিলে original-resolution images পাওয়া গেলে সেগুলো নামাবে। একাধিক image ZIP হবে; video link হলে best available thumbnail fallback চেষ্টা করবে।
+3. **Converter** tab-এ নিজের video upload করে MP4/MP3 export করো.
+4. Available video quality বা MP3 নির্বাচন করো.
+5. ১০ মিনিটের কম duration হলে Trim option দেখা যাবে না। Duration ১০ মিনিট বা বেশি হলে checkbox অন করে start/end seconds দাও.
+6. **Prepare download** চাপো; কাজ শেষ হলে Download বাটন আসবে।
 
 ## Free plan-এর সীমা
 
