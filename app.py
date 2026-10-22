@@ -123,7 +123,7 @@ def clean_expired_jobs():
 
 def call_ytdlp_info(url: str) -> dict:
     cmd = [
-        "yt-dlp", "--js-runtimes", "node", "--dump-single-json", "--skip-download", "--no-warnings",
+        "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno", "--dump-single-json", "--skip-download", "--no-warnings",
         "--no-playlist", "--socket-timeout", "12", "--retries", "1",
         "--fragment-retries", "1", "--no-cache-dir", url,
     ]
@@ -344,7 +344,7 @@ async def process_download(job_id, url, quality, output_format, trim):
     try:
         template = str(directory / "clip.%(ext)s")
         cmd = [
-            "yt-dlp", "--js-runtimes", "node", "--newline", "--no-warnings", "--no-playlist",
+            "yt-dlp", "--js-runtimes", "deno:/usr/local/bin/deno", "--newline", "--no-warnings", "--no-playlist",
             "--socket-timeout", "15", "--retries", "1", "--fragment-retries", "1",
             "--max-filesize", f"{MAX_DOWNLOAD_MB}M",
             "--progress-template", "download:__PCT__%(progress._percent_str)s",
