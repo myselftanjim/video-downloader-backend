@@ -62,6 +62,7 @@ class URLBody(BaseModel):
 class DownloadBody(URLBody):
     quality: str = Field(default="best", pattern=r"^(best|144|240|360|480|720|1080|1440|2160)$")
     output_format: str = Field(default="mp4", pattern=r"^(mp4|mp3)$")
+    download_name: str | None = Field(default=None, max_length=180)
     trim_start: float | None = Field(default=None, ge=0, le=14400)
     trim_end: float | None = Field(default=None, gt=0, le=14400)
 
@@ -70,6 +71,7 @@ class ConvertBody(BaseModel):
     media_id: str = Field(min_length=10, max_length=40, pattern=r"^[a-f0-9]+$")
     quality: str = Field(default="best", pattern=r"^(best|144|240|360|480|720|1080|1440|2160)$")
     output_format: str = Field(default="mp4", pattern=r"^(mp4|mp3)$")
+    download_name: str | None = Field(default=None, max_length=180)
     trim_start: float | None = Field(default=None, ge=0, le=14400)
     trim_end: float | None = Field(default=None, gt=0, le=14400)
 
@@ -362,12 +364,24 @@ async def process_local_conversion(job_id: str, media_id: str, quality: str,
         stderr_task = asyncio.create_task(proc.stderr.read())
         try:
             code = await asyncio.wait_for(proc.wait(), timeout=15 * 60)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise RuntimeError("১৫ মিনিটের processing limit শেষ হয়েছে। ছোট ভিডিও বা কম resolution ব্যবহার করো।")
-        await progress_task
-        stderr = (await stderr_task).decode("utf-8", "replace")
+            await progress_task
+            stderr = (await stderr_task).decode("utf-8", "replace")
+        except asyncio.TimeoutError as exc:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            progress_task.cancel()
+            stderr_task.cancel()
+            await asyncio.gather(progress_task, stderr_task, return_exceptions=True)
+            raise RuntimeError("১৫ মিনিটের processing limit শেষ হয়েছে। ছোট ভিডিও বা কম resolution ব্যবহার করো।") from exc
+        except asyncio.CancelledError:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            progress_task.cancel()
+            stderr_task.cancel()
+            await asyncio.gather(progress_task, stderr_task, return_exceptions=True)
+            raise
         if code:
             reason = next((line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "FFmpeg conversion ব্যর্থ হয়েছে।")
             raise RuntimeError(reason[:450])
@@ -478,16 +492,24 @@ async def _process_download_ytdlp(job_id, url, quality, output_format, trim):
             err_task = asyncio.create_task(proc.stderr.read())
             try:
                 code = await asyncio.wait_for(proc.wait(), timeout=15 * 60)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
                 await out_task
                 stderr = (await err_task).decode("utf-8", "replace")
+            except asyncio.TimeoutError:
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+                await asyncio.gather(out_task, err_task, return_exceptions=True)
                 last_error = "১৫ মিনিটের processing সীমা শেষ হয়েছে। ছোট ভিডিও বা কম quality বেছে নাও।"
                 print(f"[yt-dlp-download] attempt={attempt_index} result=timeout")
                 continue
-            await out_task
-            stderr = (await err_task).decode("utf-8", "replace")
+            except asyncio.CancelledError:
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+                out_task.cancel()
+                err_task.cancel()
+                await asyncio.gather(out_task, err_task, return_exceptions=True)
+                raise
             base = directory.resolve()
             candidate = Path(job.get("candidate") or "").resolve()
             if not candidate.is_relative_to(base) or not candidate.is_file():
@@ -826,11 +848,14 @@ async def convert_uploaded(body: ConvertBody):
         raise HTTPException(400, "এই ভিডিওতে audio track নেই।")
     job_id = token_hex(10)
     source_title = Path(source.get("filename") or "Uploaded video").stem
+    requested_name = (body.download_name or "").strip() or source_title
     jobs[job_id] = {"id": job_id, "status": "running", "progress": 0, "message": "Conversion শুরু হচ্ছে…",
                     "created_at": time.time(), "output_file": None,
-                    "title": source_title, "filename": safe_download_filename(source_title, body.output_format),
+                    "title": source_title, "filename": safe_download_filename(requested_name, body.output_format),
                     "upload_id": body.media_id}
-    asyncio.create_task(process_local_conversion(job_id, body.media_id, body.quality, body.output_format, trim))
+    jobs[job_id]["task"] = asyncio.create_task(
+        process_local_conversion(job_id, body.media_id, body.quality, body.output_format, trim)
+    )
     return {"job_id": job_id, "status": "running"}
 
 
@@ -845,10 +870,13 @@ async def download(body: DownloadBody):
     trim = validate_trim(body, shaped["duration"])
     job_id = token_hex(10)
     source_title = shaped.get("title") or "MediaNest Download"
+    requested_name = (body.download_name or "").strip() or source_title
     jobs[job_id] = {"id": job_id, "status": "running", "progress": 0, "message": "কাজ শুরু হচ্ছে…",
                     "created_at": time.time(), "output_file": None,
-                    "title": source_title, "filename": safe_download_filename(source_title, body.output_format)}
-    asyncio.create_task(process_download(job_id, url, body.quality, body.output_format, trim))
+                    "title": source_title, "filename": safe_download_filename(requested_name, body.output_format)}
+    jobs[job_id]["task"] = asyncio.create_task(
+        process_download(job_id, url, body.quality, body.output_format, trim)
+    )
     return {"job_id": job_id, "status": "running"}
 
 
@@ -862,6 +890,46 @@ async def job_status(job_id: str):
             "filename": job.get("filename"),
             "download_url": f"/api/jobs/{job_id}/file" if job["status"] == "completed" else None}
 
+
+
+
+@app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(require_session)])
+async def cancel_job(job_id: str):
+    clean_expired_jobs()
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "এই কাজের মেয়াদ শেষ হয়েছে অথবা এটি পাওয়া যায়নি।")
+    if job.get("status") == "cancelled":
+        return {"id": job_id, "status": "cancelled", "message": "কাজ বাতিল করা হয়েছে।"}
+    if job.get("status") != "running":
+        raise HTTPException(409, "এই কাজটি আর চলমান নেই।")
+
+    proc = job.get("process")
+    if proc is not None and proc.returncode is None:
+        try:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        except ProcessLookupError:
+            pass
+
+    task = job.get("task")
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    shutil.rmtree(TEMP_ROOT / job_id, ignore_errors=True)
+    job.update(status="cancelled", progress=0, message="কাজ বাতিল করা হয়েছে।", output_file=None)
+    job.pop("process", None)
+    job.pop("task", None)
+    return {"id": job_id, "status": "cancelled", "message": "কাজ বাতিল করা হয়েছে।"}
 
 @app.get("/api/jobs/{job_id}/file", dependencies=[Depends(require_session)])
 async def job_file(job_id: str, background_tasks: BackgroundTasks):
