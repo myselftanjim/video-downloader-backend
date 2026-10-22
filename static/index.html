@@ -6,6 +6,7 @@
 <meta name="author" content="ReelsByTanjim">
 <meta name="theme-color" content="#080910">
 <title>MediaNest — by ReelsByTanjim</title>
+<link rel="icon" type="image/svg+xml" href="/static/medianest-icon.svg?v=1">
 <style>
 :root{
   color-scheme:dark;
@@ -80,6 +81,24 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .platforms span{padding:6px 10px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:11px;background:rgba(14,16,24,.65)}
 .warn{color:var(--muted);border-left:2px solid var(--purple);padding-left:11px;font-size:12px;margin-top:16px}
 @media(max-width:600px){.wrap{width:min(100% - 20px,920px);padding-top:18px}.top{margin-bottom:35px}.pill{font-size:10px}.grid{grid-template-columns:1fr}.urlrow{flex-direction:column}.urlrow .btn{width:100%}.hero p{font-size:14px}.footer{flex-direction:column;gap:6px}.actions .btn{flex:1 1 100%}}
+
+.app-nav{display:flex;gap:7px;margin:0 0 20px;padding:5px;border:1px solid var(--line);border-radius:15px;background:rgba(14,16,24,.88)}
+.nav-button{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-width:0;padding:11px 14px;border:1px solid transparent;border-radius:11px;background:transparent;color:var(--muted);font-family:"Space Grotesk","DM Sans",sans-serif;font-weight:600;transition:background .18s,border-color .18s,color .18s}
+.nav-button:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.nav-button.active{background:var(--brand-gradient);border-color:rgba(255,255,255,.12);color:#fff;box-shadow:0 6px 18px #684BCB26}
+.tool-view{min-width:0}
+.converter-intro{display:flex;align-items:center;gap:15px;margin:4px 0 22px}
+.converter-intro h2{font-size:clamp(24px,4vw,32px);letter-spacing:-.045em;margin:5px 0 7px}
+.converter-intro p{max-width:570px;color:var(--muted);font-size:14px;margin:0}
+.converter-mark{display:grid;place-items:center;flex:0 0 48px;height:48px;border-radius:15px;background:var(--brand-gradient);color:#fff;font-size:25px;box-shadow:0 8px 26px #684BCB2a}
+.upload-card{padding:clamp(17px,3vw,24px);border:1px dashed rgba(168,140,255,.42);border-radius:18px;background:linear-gradient(145deg,rgba(17,19,29,.84),rgba(14,16,24,.95))}
+.upload-card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.upload-card-heading h3{font-size:16px;margin:0;font-weight:700}
+.upload-picker{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:18px}
+.selected-file{min-width:0;flex:1;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.upload-action{width:100%;margin-top:16px}
+.upload-note{margin-top:11px}
+@media(max-width:600px){.app-nav{margin-bottom:16px}.nav-button{padding:10px 8px;font-size:13px}.converter-intro{align-items:flex-start}.converter-mark{flex-basis:42px;height:42px;border-radius:13px}.upload-picker{align-items:stretch}.upload-picker .btn{width:100%}.selected-file{flex-basis:100%}}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -107,6 +126,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
   <div id="loginMsg" class="small" role="status" style="margin-top:12px"></div>
 </section>
 <main id="appCard" class="panel hidden">
+  <div class="app-nav" role="tablist" aria-label="Media tools">
+    <button id="downloaderTab" class="nav-button active" type="button" role="tab" aria-selected="true">Downloader</button>
+    <button id="converterTab" class="nav-button" type="button" role="tab" aria-selected="false">Converter <span aria-hidden="true">↗</span></button>
+  </div>
+  <div id="downloaderView" class="tool-view" role="tabpanel" aria-labelledby="downloaderTab">
   <form id="infoForm">
     <label class="label" for="url">Paste a video link</label>
     <div class="urlrow">
@@ -115,15 +139,31 @@ button:disabled{opacity:.45;cursor:not-allowed}
     </div>
     <div class="hint">Use a public link for content you own or have permission to save. Availability depends on the source platform.</div>
   </form>
-  <section class="section" id="uploadSection" style="border-top:1px solid #2c2c2c;margin-top:20px;padding-top:18px">
-    <h3 class="section-title" style="margin-bottom:6px">Or upload a video from your device</h3>
-    <p class="hint" style="margin-bottom:12px">Useful when a social platform blocks server downloads. Upload a video you own or have permission to use (MP4, MOV, MKV, WebM, AVI; up to 90 MB).</p>
-    <div class="urlrow">
-      <input id="localFile" class="field" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,.m4v,.mpeg,.mpg,.3gp,video/*">
-      <button id="uploadBtn" class="btn secondary" type="button">Upload & inspect ↑</button>
-    </div>
-    <p class="hint">Uploaded files are temporary and are deleted after download or expiry.</p>
-  </section>
+  </div>
+  <div id="converterView" class="tool-view hidden" role="tabpanel" aria-labelledby="converterTab">
+    <section class="converter-intro">
+      <div class="converter-mark" aria-hidden="true">↗</div>
+      <div>
+        <div class="eyebrow">Local media tools</div>
+        <h2>Converter</h2>
+        <p>Convert a video from your device to MP4 or MP3. Choose resolution and trim longer videos.</p>
+      </div>
+    </section>
+    <section class="upload-card">
+      <div class="upload-card-heading">
+        <h3>Upload a video</h3>
+        <span class="small">Up to 90 MB</span>
+      </div>
+      <p class="hint">MP4, MOV, MKV, WebM, AVI and other supported formats. Uploaded files are temporary and automatically deleted after download or expiry.</p>
+      <input id="localFile" class="hidden" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,.m4v,.mpeg,.mpg,.3gp,video/*">
+      <div class="upload-picker">
+        <button id="chooseFileBtn" class="btn secondary" type="button">Choose video file</button>
+        <span id="selectedFileName" class="selected-file">No file selected</span>
+      </div>
+      <button id="uploadBtn" class="btn upload-action" type="button" disabled>Upload & inspect <span aria-hidden="true">↑</span></button>
+      <p class="small upload-note">Only upload videos you own or have permission to use.</p>
+    </section>
+  </div>
   <section id="mediaInfo" class="section hidden">
     <div class="rowlabel"><h3 id="videoTitle" class="section-title" style="font-size:16px;margin:0 0 5px"></h3><span id="source" class="small"></span></div>
     <div class="small">Duration: <strong id="duration">—</strong></div>
@@ -173,6 +213,27 @@ function updateFormat(){
  if(mp3){el("trimSection").classList.remove("active")}
  else{el("trimSection").classList.toggle("active",Boolean(currentInfo&&currentInfo.trim_allowed))}
 }
+var activeView="downloader";
+function setActiveView(view){
+ if(view===activeView)return;
+ if(currentJob){
+  setMsg("appMsg","Finish the current job or use Reset before switching tools.","error");
+  return;
+ }
+ activeView=view;
+ el("downloaderView").classList.toggle("hidden",view!=="downloader");
+ el("converterView").classList.toggle("hidden",view!=="converter");
+ el("downloaderTab").classList.toggle("active",view==="downloader");
+ el("converterTab").classList.toggle("active",view==="converter");
+ el("downloaderTab").setAttribute("aria-selected",String(view==="downloader"));
+ el("converterTab").setAttribute("aria-selected",String(view==="converter"));
+ currentInfo=null;mediaSource="url";uploadedMediaId=null;
+ el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;
+ el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");
+ setMsg("appMsg","");
+}
+el("downloaderTab").addEventListener("click",function(){setActiveView("downloader")});
+el("converterTab").addEventListener("click",function(){setActiveView("converter")});
 async function checkSession(){
  try{var data=await api("/api/session");setAuth(Boolean(data.authenticated))}
  catch(e){setAuth(false)}
@@ -192,6 +253,7 @@ function showMediaInfo(info){
   (info.qualities||[]).forEach(function(q){var opt=document.createElement("option");opt.value=String(q);opt.textContent=q+"p";quality.appendChild(opt)});
   var best=document.createElement("option");best.value="best";best.textContent="Best available";quality.insertBefore(best,quality.firstChild);quality.value="best";
   el("trimStart").value="0";el("trimEnd").value=String(Math.min(info.duration||10,30));el("trimEnabled").checked=false;
+  el("resetBtn").textContent=mediaSource==="upload"?"Choose another file":"New link";
   el("mediaInfo").classList.remove("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");updateFormat();
 }
 el("infoForm").addEventListener("submit",async function(ev){
@@ -205,6 +267,12 @@ el("infoForm").addEventListener("submit",async function(ev){
  }catch(e){currentInfo=null;setMsg("appMsg",e.message,"error")}
  finally{el("inspectBtn").disabled=false}
 });
+el("chooseFileBtn").addEventListener("click",function(){el("localFile").click()});
+el("localFile").addEventListener("change",function(){
+ var file=el("localFile").files[0];
+ el("selectedFileName").textContent=file?file.name+" ("+(file.size/1024/1024).toFixed(1)+" MB)":"No file selected";
+ el("uploadBtn").disabled=!file;
+});
 el("uploadBtn").addEventListener("click",async function(){
  var file=el("localFile").files[0];
  if(!file){setMsg("appMsg","আগে একটি ভিডিও ফাইল নির্বাচন করো।","error");return}
@@ -215,7 +283,7 @@ el("uploadBtn").addEventListener("click",async function(){
   mediaSource="upload";uploadedMediaId=info.media_id;showMediaInfo(info);
   setMsg("appMsg","Video uploaded temporarily. Trim, convert or download below.","success");
  }catch(e){currentInfo=null;setMsg("appMsg",e.message,"error")}
- finally{el("uploadBtn").disabled=false}
+ finally{el("uploadBtn").disabled=!el("localFile").files[0]}
 });
 el("format").addEventListener("change",updateFormat);
 el("downloadBtn").addEventListener("click",async function(){
@@ -246,8 +314,8 @@ async function pollJob(){
  }catch(e){showStatus(e.message,"error");el("downloadBtn").disabled=false}
 }
 el("downloadLink").addEventListener("click",function(){setTimeout(function(){el("downloadWrap").classList.add("hidden");currentJob=null},4000)});
-el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("localFile").value="";el("trimEnabled").checked=false;el("mediaInfo").classList.add("hidden");mediaSource="url";uploadedMediaId=null;el("statusBox").classList.remove("show");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
-el("logoutBtn").addEventListener("click",async function(){try{await api("/api/logout",{method:"POST"})}catch(e){}currentInfo=null;currentJob=null;setAuth(false)});
+el("resetBtn").addEventListener("click",function(){currentInfo=null;currentJob=null;el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;el("trimEnabled").checked=false;el("mediaInfo").classList.add("hidden");mediaSource="url";uploadedMediaId=null;el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");setMsg("appMsg","");if(pollHandle)clearTimeout(pollHandle)});
+el("logoutBtn").addEventListener("click",async function(){try{await api("/api/logout",{method:"POST"})}catch(e){}currentInfo=null;currentJob=null;setActiveView("downloader");setAuth(false)});
 checkSession();
 })();
 </script>
