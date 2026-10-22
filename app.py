@@ -11,7 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 from secrets import token_hex
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -38,12 +38,26 @@ MAX_JOBS = 1
 CLEANUP_INTERVAL_SECONDS = 5 * 60
 MAX_VIDEO_SECONDS = 4 * 60 * 60
 ALLOWED_HEIGHTS = {144, 240, 360, 480, 720, 1080, 1440, 2160}
+PINTEREST_DOMAINS = {
+    "pinterest.com", "pinterest.fr", "pinterest.de", "pinterest.ch",
+    "pinterest.jp", "pinterest.cl", "pinterest.ca", "pinterest.it",
+    "pinterest.co.uk", "pinterest.nz", "pinterest.ru", "pinterest.com.au",
+    "pinterest.at", "pinterest.pt", "pinterest.co.kr", "pinterest.es",
+    "pinterest.com.mx", "pinterest.dk", "pinterest.ph", "pinterest.th",
+    "pinterest.com.uy", "pinterest.co", "pinterest.nl", "pinterest.info",
+    "pinterest.kr", "pinterest.ie", "pinterest.vn", "pinterest.com.vn",
+    "pinterest.ec", "pinterest.mx", "pinterest.in", "pinterest.pe",
+    "pinterest.co.at", "pinterest.co.in", "pinterest.co.nz", "pinterest.id",
+    "pinterest.com.ec", "pinterest.com.py", "pinterest.tw", "pinterest.be",
+    "pinterest.uk", "pinterest.com.bo", "pinterest.com.pe",
+}
+PINTEREST_SHORT_HOSTS = {"pin.it"}
 ALLOWED_HOSTS = {
     "youtube.com", "youtu.be", "youtube-nocookie.com",
     "facebook.com", "fb.watch",
     "instagram.com",
     "tiktok.com", "vm.tiktok.com", "vt.tiktok.com",
-}
+} | PINTEREST_DOMAINS | PINTEREST_SHORT_HOSTS
 serializer = URLSafeTimedSerializer(SESSION_SECRET or "not-configured")
 jobs = {}
 uploads = {}
@@ -119,6 +133,16 @@ def require_session(request: Request):
     return True
 
 
+def is_allowed_host(host: str) -> bool:
+    return any(host == domain or host.endswith("." + domain) for domain in ALLOWED_HOSTS)
+
+
+def is_pinterest_host(host: str) -> bool:
+    return host in PINTEREST_SHORT_HOSTS or any(
+        host == domain or host.endswith("." + domain) for domain in PINTEREST_DOMAINS
+    )
+
+
 def validate_url(raw: str) -> str:
     value = raw.strip()
     try:
@@ -131,11 +155,62 @@ def validate_url(raw: str) -> str:
         raise HTTPException(400, "শুধু public HTTPS লিংক ব্যবহার করো।")
     if port not in (None, 443):
         raise HTTPException(400, "এই URL-এর port অনুমোদিত নয়।")
-    if not any(host == domain or host.endswith("." + domain) for domain in ALLOWED_HOSTS):
-        raise HTTPException(400, "এই সংস্করণে YouTube, Facebook, Instagram ও TikTok-এর লিংক সমর্থিত।")
+    if not is_allowed_host(host):
+        raise HTTPException(400, "এই সংস্করণে YouTube, Facebook, Instagram, TikTok ও Pinterest-এর লিংক সমর্থিত।")
     if parsed.path in ("", "/"):
         raise HTTPException(400, "ভিডিওর সম্পূর্ণ লিংক দাও।")
     return value
+
+
+async def normalize_source_url(raw: str) -> str:
+    """Expand Pinterest short share links without following redirects to arbitrary hosts."""
+    value = validate_url(raw)
+    try:
+        host = (urlsplit(value).hostname or "").lower().rstrip(".")
+    except ValueError:
+        raise HTTPException(400, "সঠিক ভিডিও লিংক দাও।")
+    if host not in PINTEREST_SHORT_HOSTS:
+        return value
+
+    timeout = httpx.Timeout(10.0, connect=5.0)
+    current = value
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            for _ in range(6):
+                parsed = urlsplit(current)
+                current_host = (parsed.hostname or "").lower().rstrip(".")
+                if current_host not in PINTEREST_SHORT_HOSTS:
+                    return validate_url(current)
+                async with client.stream(
+                    "GET", current,
+                    headers={"Range": "bytes=0-0", "User-Agent": "Mozilla/5.0 MediaNest"},
+                ) as response:
+                    if not response.is_redirect:
+                        raise HTTPException(
+                            422,
+                            "Pinterest-এর short link resolve করা যায়নি। Pinterest থেকে full pin link copy করে আবার চেষ্টা করো।",
+                        )
+                    location = response.headers.get("location")
+                    if not location:
+                        raise HTTPException(422, "Pinterest short link-এ redirect destination পাওয়া যায়নি।")
+                    target = urljoin(current, location)
+                    target_parts = urlsplit(target)
+                    target_host = (target_parts.hostname or "").lower().rstrip(".")
+                    if (
+                        target_parts.scheme != "https"
+                        or not target_host
+                        or target_parts.username
+                        or target_parts.password
+                        or target_parts.port not in (None, 443)
+                        or not is_pinterest_host(target_host)
+                    ):
+                        raise HTTPException(400, "Pinterest short link একটি অননুমোদিত host-এ redirect করেছে।")
+                    current = target
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(422, "Pinterest short link খোলা যায়নি। Full Pinterest pin link ব্যবহার করে দেখো।") from exc
+    raise HTTPException(422, "Pinterest short link-এ অতিরিক্ত redirect হয়েছে। Full Pinterest pin link ব্যবহার করো।")
 
 
 def clean_expired_jobs():
@@ -886,7 +961,7 @@ async def logout():
 @app.post("/api/info", dependencies=[Depends(require_session)])
 async def info(body: URLBody):
     clean_expired_jobs()
-    url = validate_url(body.url)
+    url = await normalize_source_url(body.url)
     try:
         data = await asyncio.to_thread(call_ytdlp_info, url)
         return shape_info(data)
@@ -976,7 +1051,7 @@ async def convert_uploaded(body: ConvertBody):
 @app.post("/api/download", dependencies=[Depends(require_session)])
 async def download(body: DownloadBody):
     clean_expired_jobs()
-    url = validate_url(body.url)
+    url = await normalize_source_url(body.url)
     if any(job.get("status") == "running" for job in jobs.values()):
         raise HTTPException(429, "একটি কাজ চলছে। সেটি শেষ হলে আবার চেষ্টা করো।")
     info = await asyncio.to_thread(call_ytdlp_info, url)
