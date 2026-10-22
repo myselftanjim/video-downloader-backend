@@ -488,6 +488,14 @@ async def cobalt_media_url(url: str, quality: str, output_format: str):
     except httpx.TimeoutException:
         raise RuntimeError("Alternative downloader timed out while reading the source.")
     except httpx.HTTPStatusError as exc:
+        # Log the upstream error code/body for diagnosis without logging the private API key.
+        try:
+            payload = exc.response.json()
+            detail = payload.get("error", {}).get("code") if isinstance(payload, dict) else None
+            detail = str(detail or payload.get("message") or "no error code") if isinstance(payload, dict) else "invalid error payload"
+        except (ValueError, AttributeError):
+            detail = (exc.response.text or "empty response").replace("\\n", " ")[:300]
+        print(f"[cobalt-api-error] status={exc.response.status_code} detail={detail[:300]}")
         if exc.response.status_code in (401, 403):
             raise RuntimeError("Alternative downloader authentication failed. Check its private API key.")
         raise RuntimeError(f"Alternative downloader returned HTTP {exc.response.status_code}.")
