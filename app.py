@@ -647,10 +647,12 @@ async def process_cobalt_download(job_id, url, quality, output_format):
 
 
 async def process_download(job_id, url, quality, output_format, trim):
-    # Try yt-dlp first; use the independently deployed Cobalt engine only if it fails.
+    # Try yt-dlp first; Cobalt no longer supports YouTube, so only use it for other hosts.
     await _process_download_ytdlp(job_id, url, quality, output_format, trim)
+    host = (urlsplit(url).hostname or "").lower()
+    is_youtube = host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
     job = jobs.get(job_id)
-    if job and job.get("status") == "failed" and cobalt_enabled():
+    if job and job.get("status") == "failed" and cobalt_enabled() and not is_youtube:
         shutil.rmtree(TEMP_ROOT / job_id, ignore_errors=True)
         job.update(status="running", progress=0, message="Trying the alternative media engine…",
                    output_file=None, filename=None, candidate=None)
@@ -734,9 +736,10 @@ async def info(body: URLBody):
         data = await asyncio.to_thread(call_ytdlp_info, url)
         return shape_info(data)
     except HTTPException as exc:
-        if cobalt_enabled() and exc.status_code >= 422:
-            # The alternative engine resolves the source when the user presses Download.
-            # Duration/trim controls are intentionally omitted because this fallback does not expose metadata.
+        host = (urlsplit(url).hostname or "").lower()
+        is_youtube = host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
+        if cobalt_enabled() and exc.status_code >= 422 and not is_youtube:
+            # Cobalt metadata fallback is only used for services it can process.
             return cobalt_fallback_info(url)
         raise
 
