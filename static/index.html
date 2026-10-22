@@ -110,7 +110,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
   <div class="brand"><div class="logo">▶</div><span>MediaNest</span><span class="brand-credit">by <strong>ReelsByTanjim</strong></span></div>
   <div class="pill"><span class="dot"></span> Personal workspace</div>
 </header>
-<section class="hero">
+<section id="heroSection" class="hero">
   <div class="eyebrow">Your private media toolkit</div>
   <h1>Videos in.<br><span class="gradient">Your format out.</span></h1>
   <p>Choose an accessible video link, select a format and quality, then download. Made for your phone, tablet and computer.</p>
@@ -221,6 +221,7 @@ function setActiveView(view){
   return;
  }
  activeView=view;
+ el("heroSection").classList.toggle("hidden",view==="converter");
  el("downloaderView").classList.toggle("hidden",view!=="downloader");
  el("converterView").classList.toggle("hidden",view!=="converter");
  el("downloaderTab").classList.toggle("active",view==="downloader");
