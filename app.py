@@ -1,5 +1,6 @@
 import asyncio
 import hmac
+import httpx
 import json
 import os
 import re
@@ -27,6 +28,8 @@ APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 MAX_DOWNLOAD_MB = max(50, min(1000, int(os.getenv("MAX_DOWNLOAD_MB", "400"))))
 MAX_UPLOAD_MB = max(10, min(95, int(os.getenv("MAX_UPLOAD_MB", "90"))))
+COBALT_API_URL = os.getenv("COBALT_API_URL", "").rstrip("/")
+COBALT_API_KEY = os.getenv("COBALT_API_KEY", "")
 SESSION_COOKIE = "clipnest_session"
 SESSION_AGE = 7 * 24 * 60 * 60
 JOB_TTL = 30 * 60
@@ -372,7 +375,7 @@ def validate_trim(body, duration):
     return body.trim_start, body.trim_end
 
 
-async def process_download(job_id, url, quality, output_format, trim):
+async def _process_download_ytdlp(job_id, url, quality, output_format, trim):
     job = jobs[job_id]
     directory = TEMP_ROOT / job_id
     directory.mkdir(parents=True, exist_ok=True)
@@ -439,6 +442,154 @@ async def process_download(job_id, url, quality, output_format, trim):
     finally:
         job.pop("process", None)
 
+
+
+def cobalt_enabled():
+    return bool(COBALT_API_URL and COBALT_API_KEY)
+
+
+def cobalt_fallback_info(url: str) -> dict:
+    host = (urlsplit(url).hostname or "video source").lower()
+    return {
+        "title": f"Media link from {host}",
+        "duration": None,
+        "duration_text": "Unavailable from fallback source",
+        "qualities": sorted(ALLOWED_HEIGHTS, reverse=True),
+        "source": "Cobalt fallback",
+        "trim_allowed": False,
+        "cobalt_fallback": True,
+    }
+
+
+async def cobalt_media_url(url: str, quality: str, output_format: str):
+    if not cobalt_enabled():
+        raise RuntimeError("Alternative downloader is not configured.")
+
+    request_body = {
+        "url": url,
+        "videoQuality": "max" if quality == "best" else quality,
+        "downloadMode": "audio" if output_format == "mp3" else "auto",
+        "audioFormat": "mp3",
+        "youtubeVideoContainer": "mp4",
+        "filenameStyle": "pretty",
+        "localProcessing": "disabled",
+        "alwaysProxy": True,
+    }
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Api-Key {COBALT_API_KEY}",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(100.0, connect=15.0)) as client:
+            response = await client.post(f"{COBALT_API_URL}/", headers=headers, json=request_body)
+            response.raise_for_status()
+            data = response.json()
+    except httpx.TimeoutException:
+        raise RuntimeError("Alternative downloader timed out while reading the source.")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            raise RuntimeError("Alternative downloader authentication failed. Check its private API key.")
+        raise RuntimeError(f"Alternative downloader returned HTTP {exc.response.status_code}.")
+    except (httpx.HTTPError, ValueError):
+        raise RuntimeError("Alternative downloader could not be reached or returned invalid data.")
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Alternative downloader returned an invalid response.")
+    status = data.get("status")
+    filename = data.get("filename") or "clip"
+    if status == "error":
+        error = data.get("error") or {}
+        code = str(error.get("code") or "unknown")
+        raise RuntimeError(f"Alternative downloader could not process this link ({code}).")
+    if status in ("tunnel", "redirect"):
+        media_url = data.get("url")
+    elif status == "picker":
+        picks = data.get("picker") or []
+        chosen = next((item for item in picks if item.get("type") == "video"), None)
+        if not chosen:
+            raise RuntimeError("This link has multiple media items, but no video item was available to select.")
+        media_url = chosen.get("url")
+    elif status == "local-processing":
+        tunnels = data.get("tunnel") or []
+        if len(tunnels) != 1:
+            raise RuntimeError("This source requires multi-file local processing, which this free server does not support.")
+        media_url = tunnels[0]
+        out = data.get("output") or {}
+        filename = out.get("filename") or filename
+    else:
+        raise RuntimeError("Alternative downloader returned an unsupported response.")
+
+    if not isinstance(media_url, str) or not media_url:
+        raise RuntimeError("Alternative downloader did not return a media URL.")
+    if media_url.startswith("/"):
+        media_url = COBALT_API_URL + media_url
+    parsed_media = urlsplit(media_url)
+    parsed_api = urlsplit(COBALT_API_URL)
+    if parsed_media.scheme != "https" or not parsed_media.hostname:
+        raise RuntimeError("Alternative downloader returned an unsafe media URL.")
+    safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(str(filename)).name).strip(" .")
+    if not safe_name:
+        safe_name = "clip.mp3" if output_format == "mp3" else "clip.mp4"
+    return media_url, safe_name
+
+
+async def process_cobalt_download(job_id, url, quality, output_format):
+    job = jobs[job_id]
+    directory = TEMP_ROOT / job_id
+    directory.mkdir(parents=True, exist_ok=True)
+    output_path = directory / ("clip.mp3" if output_format == "mp3" else "clip.mp4")
+    try:
+        media_url, safe_name = await cobalt_media_url(url, quality, output_format)
+        media_host = (urlsplit(media_url).hostname or "").lower()
+        api_host = (urlsplit(COBALT_API_URL).hostname or "").lower()
+        headers = {"Authorization": f"Api-Key {COBALT_API_KEY}"} if media_host == api_host else {}
+        total = 0
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=20.0), follow_redirects=True
+        ) as client:
+            async with client.stream("GET", media_url, headers=headers) as response:
+                response.raise_for_status()
+                total_hint = response.headers.get("content-length") or response.headers.get("estimated-content-length")
+                try:
+                    total_hint = int(total_hint) if total_hint else 0
+                except (TypeError, ValueError):
+                    total_hint = 0
+                with output_path.open("wb") as out:
+                    async for chunk in response.aiter_bytes(1024 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > MAX_DOWNLOAD_MB * 1024 * 1024:
+                            raise RuntimeError(f"ফাইল {MAX_DOWNLOAD_MB} MB সীমা ছাড়িয়েছে।")
+                        out.write(chunk)
+                        if total_hint > 0:
+                            job["progress"] = min(99, round(total / total_hint * 100))
+        if not output_path.is_file() or output_path.stat().st_size == 0:
+            raise RuntimeError("Alternative downloader returned an empty file.")
+        if output_path.stat().st_size > MAX_DOWNLOAD_MB * 1024 * 1024:
+            raise RuntimeError(f"ফাইল {MAX_DOWNLOAD_MB} MB সীমা ছাড়িয়েছে।")
+        job.update(
+            status="completed", progress=100, message="ফাইল প্রস্তুত।",
+            output_file=str(output_path),
+            filename="clip.mp3" if output_format == "mp3" else "clip.mp4",
+        )
+    except Exception as exc:
+        shutil.rmtree(directory, ignore_errors=True)
+        job.update(status="failed", progress=0, message=str(exc)[:500], output_file=None)
+    finally:
+        job.pop("process", None)
+
+
+async def process_download(job_id, url, quality, output_format, trim):
+    # Try yt-dlp first; use the independently deployed Cobalt engine only if it fails.
+    await _process_download_ytdlp(job_id, url, quality, output_format, trim)
+    job = jobs.get(job_id)
+    if job and job.get("status") == "failed" and cobalt_enabled():
+        shutil.rmtree(TEMP_ROOT / job_id, ignore_errors=True)
+        job.update(status="running", progress=0, message="Trying the alternative media engine…",
+                   output_file=None, filename=None, candidate=None)
+        await process_cobalt_download(job_id, url, quality, output_format)
 
 def clean_after_download(job_id):
     job = jobs.get(job_id, {})
@@ -513,8 +664,16 @@ async def logout():
 @app.post("/api/info", dependencies=[Depends(require_session)])
 async def info(body: URLBody):
     clean_expired_jobs()
-    data = await asyncio.to_thread(call_ytdlp_info, validate_url(body.url))
-    return shape_info(data)
+    url = validate_url(body.url)
+    try:
+        data = await asyncio.to_thread(call_ytdlp_info, url)
+        return shape_info(data)
+    except HTTPException as exc:
+        if cobalt_enabled() and exc.status_code >= 422:
+            # The alternative engine resolves the source when the user presses Download.
+            # Duration/trim controls are intentionally omitted because this fallback does not expose metadata.
+            return cobalt_fallback_info(url)
+        raise
 
 
 
