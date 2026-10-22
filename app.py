@@ -123,7 +123,7 @@ def clean_expired_jobs():
 
 def call_ytdlp_info(url: str) -> dict:
     cmd = [
-        "yt-dlp", "--dump-single-json", "--skip-download", "--no-warnings",
+        "yt-dlp", "--js-runtimes", "node", "--dump-single-json", "--skip-download", "--no-warnings",
         "--no-playlist", "--socket-timeout", "12", "--retries", "1",
         "--fragment-retries", "1", "--no-cache-dir", url,
     ]
@@ -138,10 +138,11 @@ def call_ytdlp_info(url: str) -> dict:
             raise HTTPException(422, "YouTube এই cloud server-এর request-এ verification চাইছে, তাই এই লিংকটি এখন সরাসরি প্রসেস করা যাচ্ছে না। আমরা verification bypass করি না। ভিডিওটি নিজের হলে YouTube Studio বা Google Takeout থেকে ফাইলটি ডাউনলোড করে নিচের ‘Upload a video’ অংশে দিলে Trim/MP3/MP4 করা যাবে।")
         if "private video" in lowered or "login required" in lowered or "sign in to confirm" in lowered:
             raise HTTPException(422, "এই ভিডিওটি private বা login/verification চাইছে। অ্যাপ এই access control bypass করবে না। public/অনুমোদিত লিংক ব্যবহার করো, অথবা নিজের ভিডিও official পদ্ধতিতে ডাউনলোড করে Upload অপশন ব্যবহার করো।")
+        if "failed to extract any player response" in lowered or "unable to extract any player response" in lowered or "unable to extract yt initial data" in lowered:
+            raise HTTPException(422, "YouTube থেকে ভিডিওর তথ্য পড়া যাচ্ছে না। Extractor-এর version/runtime update করা হয়েছে, কিন্তু YouTube যদি cloud server-কে response না দেয়, তাহলে এই লিংক সরাসরি কাজ নাও করতে পারে। নিজের ভিডিও হলে YouTube Studio/Google Takeout থেকে নামিয়ে ‘Upload a video’ অংশে দাও।")
         if "unsupported url" in lowered:
-            raise HTTPException(422, "এই লিংকটি extractor সমর্থন করছে না। URL সঠিক কি না এবং ভিডিওটি public কি না যাচাই করো।")
-        err = next((line.strip() for line in reversed(raw_error.splitlines()) if line.strip()), "")
-        raise HTTPException(422, ("ভিডিওর তথ্য আনা যায়নি। লিংকটি public/accessible কি না যাচাই করো। " + err)[0:500])
+            raise HTTPException(422, "এই লিংকটি সমর্থিত নয়। URL সঠিক কি না এবং ভিডিওটি public কি না যাচাই করো।")
+        raise HTTPException(422, "ভিডিওর তথ্য আনা যায়নি। লিংকটি public, accessible এবং এই server থেকে উপলভ্য কি না যাচাই করো। কিছু প্ল্যাটফর্ম cloud request সীমিত করতে পারে।")
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -343,7 +344,7 @@ async def process_download(job_id, url, quality, output_format, trim):
     try:
         template = str(directory / "clip.%(ext)s")
         cmd = [
-            "yt-dlp", "--newline", "--no-warnings", "--no-playlist",
+            "yt-dlp", "--js-runtimes", "node", "--newline", "--no-warnings", "--no-playlist",
             "--socket-timeout", "15", "--retries", "1", "--fragment-retries", "1",
             "--max-filesize", f"{MAX_DOWNLOAD_MB}M",
             "--progress-template", "download:__PCT__%(progress._percent_str)s",
