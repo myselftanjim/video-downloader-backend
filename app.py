@@ -981,6 +981,10 @@ async def info(body: URLBody):
     except HTTPException as exc:
         host = (urlsplit(url).hostname or "").lower()
         is_youtube = host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be"
+        is_pinterest = is_pinterest_host(host)
+        # Do not let generic fallback metadata turn a Pinterest image Pin into a video result.
+        if is_pinterest and "downloadable video পাওয়া যায়নি" in str(exc.detail):
+            raise
         if cobalt_enabled() and exc.status_code >= 422 and not is_youtube:
             # Cobalt metadata fallback is only used for services it can process.
             return cobalt_fallback_info(url)
