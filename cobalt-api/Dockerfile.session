@@ -1,0 +1,3 @@
+FROM ghcr.io/imputnet/yt-session-generator:webserver
+EXPOSE 8080
+CMD ["sh", "-c", "./startup-webserver.sh 2>&1 | tee /app.log"]
