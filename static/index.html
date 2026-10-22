@@ -132,7 +132,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 <section id="heroSection" class="hero">
   <div class="eyebrow">Your private media toolkit</div>
   <h1>Videos in.<br><span class="gradient">Your format out.</span></h1>
-  <p>Choose an accessible video link, select a format and quality, then download. Made for your phone, tablet and computer.</p>
+  <p>Download accessible videos or original-quality images from supported public links. Made for your phone, tablet and computer.</p>
   <div class="platforms"><span>YouTube</span><span>Facebook</span><span>Instagram</span><span>Pinterest</span><span>TikTok</span><span>MP4 · MP3</span></div>
 </section>
 <section id="loginCard" class="panel login">
@@ -147,6 +147,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 <main id="appCard" class="panel hidden">
   <div class="app-nav" role="tablist" aria-label="Media tools">
     <button id="downloaderTab" class="nav-button active" type="button" role="tab" aria-selected="true">Downloader</button>
+    <button id="imagesTab" class="nav-button" type="button" role="tab" aria-selected="false">Images <span aria-hidden="true">▧</span></button>
     <button id="converterTab" class="nav-button" type="button" role="tab" aria-selected="false">Converter <span aria-hidden="true">↗</span></button>
   </div>
   <div id="downloaderView" class="tool-view" role="tabpanel" aria-labelledby="downloaderTab">
@@ -158,6 +159,38 @@ button:disabled{opacity:.45;cursor:not-allowed}
     </div>
     <div class="hint">Supports public Pinterest video Pins and pin.it share links, plus other listed platforms. Use content you own or have permission to save; private or unavailable Pins may not work.</div>
   </form>
+  </div>
+  <div id="imagesView" class="tool-view hidden" role="tabpanel" aria-labelledby="imagesTab">
+    <section class="converter-intro">
+      <div class="converter-mark" aria-hidden="true">▧</div>
+      <div>
+        <div class="eyebrow">Original image extraction</div>
+        <h2>Image Downloader</h2>
+        <p>Get original-resolution images when the source provides them. Multi-image posts are packed into one ZIP without resizing or recompressing the originals.</p>
+      </div>
+    </section>
+    <form id="imageForm" class="upload-card">
+      <label class="label" for="imageUrl">Paste a public post, photo or Pin link</label>
+      <input id="imageUrl" class="field" type="url" inputmode="url" autocomplete="url" placeholder="https://..." maxlength="2048" required>
+      <p class="hint">Supports public image posts from YouTube, Facebook, Instagram, Pinterest and TikTok. Video links can fall back to the best available thumbnail.</p>
+      <label class="label" for="imageName" style="margin-top:18px">File name (optional)</label>
+      <input id="imageName" class="field" type="text" autocomplete="off" maxlength="180" placeholder="My images">
+      <button id="imageDownloadBtn" class="btn upload-action" type="submit">Download high-quality images <span aria-hidden="true">↓</span></button>
+      <p class="small upload-note">Original source files are preserved where available. Up to 40 images and the server's configured size limit per job.</p>
+      <div id="imageMsg" class="small" role="status" aria-live="polite"></div>
+    </form>
+    <div id="imageStatusBox" class="status" role="status" aria-live="polite">
+      <div class="statusline"><span id="imageStatusText">Ready</span><strong id="imageStatusPct">0%</strong></div>
+      <div class="bar"><span id="imageProgress"></span></div>
+      <div class="job-actions">
+        <button id="imageCancelBtn" class="btn ghost hidden" type="button">Cancel job</button>
+        <button id="imageRetryBtn" class="btn secondary hidden" type="button">Retry</button>
+      </div>
+      <div id="imageDownloadWrap" class="hidden" style="margin-top:14px">
+        <a id="imageDownloadLink" class="btn" href="#" style="display:block;text-align:center;text-decoration:none">Download images</a>
+        <p class="small">The temporary server copy is removed after download or within 30 minutes.</p>
+      </div>
+    </div>
   </div>
   <div id="converterView" class="tool-view hidden" role="tabpanel" aria-labelledby="converterTab">
     <section class="converter-intro">
@@ -234,6 +267,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 (function(){
 "use strict";
 var currentInfo=null, currentJob=null, pollHandle=null, mediaSource="url", uploadedMediaId=null;
+var jobMode="media", jobStarting=false, lastImageRequest=null;
 var el=function(id){return document.getElementById(id)};
 async function api(url, options){
   var response;
@@ -247,7 +281,21 @@ async function api(url, options){
 }
 function setMsg(id,message,type){var n=el(id);n.textContent=message||"";n.className=type==="error"?"small error":type==="success"?"small success":"small"}
 function setAuth(yes){el("loginCard").classList.toggle("hidden",yes);el("appCard").classList.toggle("hidden",!yes)}
-function showStatus(message,type){el("statusBox").classList.add("show");el("statusText").textContent=message;el("statusText").className=type==="error"?"error":type==="success"?"success":""}
+function jobUi(){
+ if(jobMode==="images"){
+  return {startBtn:el("imageDownloadBtn"),retryBtn:el("imageRetryBtn"),cancelBtn:el("imageCancelBtn"),
+   statusBox:el("imageStatusBox"),statusText:el("imageStatusText"),statusPct:el("imageStatusPct"),
+   progress:el("imageProgress"),downloadWrap:el("imageDownloadWrap"),downloadLink:el("imageDownloadLink")};
+ }
+ return {startBtn:el("downloadBtn"),retryBtn:el("retryBtn"),cancelBtn:el("cancelJobBtn"),
+  statusBox:el("statusBox"),statusText:el("statusText"),statusPct:el("statusPct"),
+  progress:el("progress"),downloadWrap:el("downloadWrap"),downloadLink:el("downloadLink")};
+}
+function showStatus(message,type){
+ var ui=jobUi();
+ ui.statusBox.classList.add("show");ui.statusText.textContent=message;
+ ui.statusText.className=type==="error"?"error":type==="success"?"success":"";
+}
 function durationSeconds(){return Number(currentInfo&&currentInfo.duration||0)}
 function titleStem(title){
  return String(title||"MediaNest Download")
@@ -312,24 +360,30 @@ function selectLocalFile(file, alreadyInInput){
 var activeView="downloader";
 function setActiveView(view){
  if(view===activeView)return;
- if(currentJob){
-  setMsg("appMsg","Finish the current job or use Reset before switching tools.","error");
+ if(currentJob||jobStarting){
+  setMsg("appMsg","Finish or cancel the current job before switching tools.","error");
   return;
  }
  activeView=view;
- el("heroSection").classList.toggle("hidden",view==="converter");
+ el("heroSection").classList.toggle("hidden",view!=="downloader");
  el("downloaderView").classList.toggle("hidden",view!=="downloader");
+ el("imagesView").classList.toggle("hidden",view!=="images");
  el("converterView").classList.toggle("hidden",view!=="converter");
  el("downloaderTab").classList.toggle("active",view==="downloader");
+ el("imagesTab").classList.toggle("active",view==="images");
  el("converterTab").classList.toggle("active",view==="converter");
  el("downloaderTab").setAttribute("aria-selected",String(view==="downloader"));
+ el("imagesTab").setAttribute("aria-selected",String(view==="images"));
  el("converterTab").setAttribute("aria-selected",String(view==="converter"));
- currentInfo=null;mediaSource="url";uploadedMediaId=null;
- el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;clearLocalPreview();
+ currentInfo=null;mediaSource="url";uploadedMediaId=null;jobMode="media";lastImageRequest=null;
+ el("url").value="";el("imageUrl").value="";el("imageName").value="";el("imageMsg").textContent="";
+ el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;clearLocalPreview();
  el("downloadName").value="";el("mediaInfo").classList.add("hidden");el("statusBox").classList.remove("show");el("downloadWrap").classList.add("hidden");el("retryBtn").classList.add("hidden");el("cancelJobBtn").classList.add("hidden");
+ el("imageStatusBox").classList.remove("show");el("imageDownloadWrap").classList.add("hidden");el("imageRetryBtn").classList.add("hidden");el("imageCancelBtn").classList.add("hidden");
  setMsg("appMsg","");
 }
 el("downloaderTab").addEventListener("click",function(){setActiveView("downloader")});
+el("imagesTab").addEventListener("click",function(){setActiveView("images")});
 el("converterTab").addEventListener("click",function(){setActiveView("converter")});
 async function checkSession(){
  try{var data=await api("/api/session");setAuth(Boolean(data.authenticated))}
@@ -411,57 +465,80 @@ function buildJobRequest(){
  }
  return {endpoint:mediaSource==="upload"?"/api/convert":"/api/download",payload:payload};
 }
-async function startJobRequest(request){
- if(!request||!currentInfo)return;
- el("downloadBtn").disabled=true;el("retryBtn").classList.add("hidden");el("cancelJobBtn").classList.add("hidden");
- el("downloadWrap").classList.add("hidden");el("statusPct").textContent="0%";el("progress").style.width="0%";showStatus("Starting…");
+function buildImageJobRequest(){
+ var link=el("imageUrl").value.trim();
+ if(!link)return null;
+ return {endpoint:"/api/image-download",payload:{
+  url:link,download_name:el("imageName").value.trim()||"MediaNest Images"
+ }};
+}
+async function startJobRequest(request,mode){
+ if(!request||(mode!=="images"&&!currentInfo))return;
+ jobMode=mode||"media";
+ var ui=jobUi();
+ if(pollHandle){clearTimeout(pollHandle);pollHandle=null}
+ jobStarting=true;ui.startBtn.disabled=true;ui.retryBtn.classList.add("hidden");ui.cancelBtn.classList.add("hidden");
+ ui.downloadWrap.classList.add("hidden");ui.statusPct.textContent="0%";ui.progress.style.width="0%";showStatus("Starting…");
  try{
   var data=await api(request.endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(request.payload)});
   currentJob=data.job_id;
-  el("cancelJobBtn").disabled=false;el("cancelJobBtn").classList.remove("hidden");
+  ui.cancelBtn.disabled=false;ui.cancelBtn.classList.remove("hidden");
   pollJob();
  }catch(e){
-  currentJob=null;showStatus(e.message,"error");el("downloadBtn").disabled=false;el("retryBtn").classList.remove("hidden");
- }
+  currentJob=null;showStatus(e.message,"error");ui.startBtn.disabled=false;ui.retryBtn.classList.remove("hidden");
+ }finally{jobStarting=false}
 }
-el("downloadBtn").addEventListener("click",function(){if(currentInfo)startJobRequest(buildJobRequest())});
-el("retryBtn").addEventListener("click",function(){if(currentInfo)startJobRequest(buildJobRequest())});
-el("cancelJobBtn").addEventListener("click",async function(){
+el("downloadBtn").addEventListener("click",function(){if(currentInfo)startJobRequest(buildJobRequest(),"media")});
+el("retryBtn").addEventListener("click",function(){if(currentInfo)startJobRequest(buildJobRequest(),"media")});
+el("imageForm").addEventListener("submit",function(ev){
+ ev.preventDefault();lastImageRequest=buildImageJobRequest();
+ if(!lastImageRequest){setMsg("imageMsg","Paste a public post or Pin link first.","error");return}
+ setMsg("imageMsg","", "");startJobRequest(lastImageRequest,"images");
+});
+el("imageRetryBtn").addEventListener("click",function(){if(lastImageRequest)startJobRequest(lastImageRequest,"images")});
+async function cancelCurrentJob(){
  if(!currentJob)return;
- var jobId=currentJob;el("cancelJobBtn").disabled=true;
+ var ui=jobUi(),jobId=currentJob;ui.cancelBtn.disabled=true;
  try{
   var result=await api("/api/jobs/"+encodeURIComponent(jobId)+"/cancel",{method:"POST"});
-  if(pollHandle)clearTimeout(pollHandle);
-  currentJob=null;showStatus(result.message||"Job cancelled.");el("statusPct").textContent="0%";el("progress").style.width="0%";
-  el("cancelJobBtn").classList.add("hidden");el("retryBtn").classList.remove("hidden");el("downloadBtn").disabled=false;
+  if(pollHandle){clearTimeout(pollHandle);pollHandle=null}
+  currentJob=null;showStatus(result.message||"Job cancelled.");ui.statusPct.textContent="0%";ui.progress.style.width="0%";
+  ui.cancelBtn.classList.add("hidden");ui.retryBtn.classList.remove("hidden");ui.startBtn.disabled=false;
  }catch(e){
   showStatus(e.message,"error");
   if(currentJob)pollJob();
- }finally{el("cancelJobBtn").disabled=false}
-});
+ }finally{ui.cancelBtn.disabled=false}
+}
+el("cancelJobBtn").addEventListener("click",cancelCurrentJob);
+el("imageCancelBtn").addEventListener("click",cancelCurrentJob);
 async function pollJob(){
  if(!currentJob)return;
+ var ui=jobUi();
  try{
   var data=await api("/api/jobs/"+encodeURIComponent(currentJob));
-  el("statusText").textContent=data.message||data.status;
-  var pct=Math.round(Number(data.progress)||0);el("statusPct").textContent=pct+"%";el("progress").style.width=pct+"%";
+  ui.statusText.textContent=data.message||data.status;
+  var pct=Math.round(Number(data.progress)||0);ui.statusPct.textContent=pct+"%";ui.progress.style.width=pct+"%";
   if(data.status==="completed"){
-   currentJob=null;el("cancelJobBtn").classList.add("hidden");el("retryBtn").classList.add("hidden");
-   el("downloadLink").href=data.download_url;el("downloadLink").setAttribute("download",data.filename||"media");el("downloadLink").textContent="Download "+(data.filename||"file");el("downloadWrap").classList.remove("hidden");showStatus("Your file is ready","success");el("downloadBtn").disabled=false;return;
+   currentJob=null;ui.cancelBtn.classList.add("hidden");ui.retryBtn.classList.add("hidden");
+   ui.downloadLink.href=data.download_url;ui.downloadLink.setAttribute("download",data.filename||"media");
+   ui.downloadLink.textContent="Download "+(data.filename||"file");ui.downloadWrap.classList.remove("hidden");
+   showStatus("Your file is ready","success");ui.startBtn.disabled=false;return;
   }
   if(data.status==="failed"||data.status==="expired"||data.status==="cancelled"){
-   currentJob=null;el("cancelJobBtn").classList.add("hidden");el("retryBtn").classList.remove("hidden");
+   currentJob=null;ui.cancelBtn.classList.add("hidden");ui.retryBtn.classList.remove("hidden");
    showStatus(data.message||(data.status==="cancelled"?"Job cancelled":"Processing failed"),data.status==="cancelled"?"":"error");
-   el("downloadBtn").disabled=false;return;
+   ui.startBtn.disabled=false;return;
   }
-  el("cancelJobBtn").classList.remove("hidden");el("retryBtn").classList.add("hidden");
+  ui.cancelBtn.classList.remove("hidden");ui.retryBtn.classList.add("hidden");
   pollHandle=setTimeout(pollJob,1800);
  }catch(e){
   showStatus(e.message,"error");
   if(currentJob)pollHandle=setTimeout(pollJob,3500);
  }
 }
-el("downloadLink").addEventListener("click",function(){setTimeout(function(){el("downloadWrap").classList.add("hidden")},4000)});
+function hideDownloadedLink(wrapId){setTimeout(function(){el(wrapId).classList.add("hidden")},4000)}
+el("downloadLink").addEventListener("click",function(){hideDownloadedLink("downloadWrap")});
+el("imageDownloadLink").addEventListener("click",function(){hideDownloadedLink("imageDownloadWrap")});
 el("resetBtn").addEventListener("click",function(){
  if(currentJob){setMsg("appMsg","Cancel the current job before resetting this panel.","error");return}
  currentInfo=null;el("url").value="";el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;
