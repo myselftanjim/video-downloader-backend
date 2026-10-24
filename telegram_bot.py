@@ -28,6 +28,8 @@ ALLOWED_USER_IDS = {
     if item.strip().isdigit()
 }
 TELEGRAM_UPLOAD_LIMIT = 47 * 1024 * 1024
+TELEGRAM_DOWNLOAD_LIMIT = 20_000_000
+TELEGRAM_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v', '.mpeg', '.mpg', '.3gp'}
 LINK_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 15 * 60
 
@@ -36,6 +38,8 @@ _services: dict = {}
 _user_modes: dict[str, str] = {}
 _pending_urls: dict[str, str] = {}
 _video_sessions: dict[str, dict] = {}
+_converter_sessions: dict[str, dict] = {}
+_trim_waiting: dict[str, str] = {}
 _job_owners: dict[str, str] = {}
 _download_links: dict[str, dict] = {}
 _monitor_tasks: dict[str, asyncio.Task] = {}
@@ -114,6 +118,7 @@ def _main_menu() -> dict:
     return {"inline_keyboard": [
         [{"text": "🎬 Video Download", "callback_data": "mode:video"},
          {"text": "🖼 Image Download", "callback_data": "mode:image"}],
+        [{"text": "🎞 Convert a video", "callback_data": "mode:convert"}],
         [{"text": "📊 My Jobs / Status", "callback_data": "action:status"},
          {"text": "⛔ Cancel Job", "callback_data": "action:cancel"}],
     ]}
@@ -275,6 +280,9 @@ def _prune_sessions() -> None:
     for token, session in list(_video_sessions.items()):
         if now - session.get("created_at", 0) > SESSION_TTL_SECONDS:
             _video_sessions.pop(token, None)
+    for token, session in list(_converter_sessions.items()):
+        if now - session.get("created_at", 0) > SESSION_TTL_SECONDS:
+            _converter_sessions.pop(token, None)
     for token, link in list(_download_links.items()):
         if link.get("expires_at", 0) < now or link.get("uses", 0) >= 3:
             _download_links.pop(token, None)
@@ -450,6 +458,187 @@ async def _send_shared_job(chat_id, user_id: str, job_id: str) -> None:
     else:
         await _send_message(chat_id, "ফাইলটি Telegram-এ পাঠানো যায়নি। ওয়েবসাইটের Jobs tab থেকে ডাউনলোড করো।",
                             _main_menu())
+
+
+def _conversion_keyboard(token: str, session: dict) -> dict:
+    rows = []
+    options = [("best", "Best")]
+    for height in session.get("qualities") or []:
+        quality = str(height)
+        if quality.isdigit() and (quality, quality + "p") not in options:
+            options.append((quality, quality + "p"))
+    row = []
+    for quality, label in options:
+        row.append({"text": "MP4 · " + label, "callback_data": f"convert:{token}:mp4:{quality}"})
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    if session.get("has_audio"):
+        rows.append([{"text": "🎵 Export MP3 audio", "callback_data": f"convert:{token}:mp3:best"}])
+    if (session.get("duration") or 0) >= 600:
+        rows.append([{"text": "✂️ Trim then convert", "callback_data": f"trimask:{token}"}])
+    rows.append([{"text": "⬅️ Menu", "callback_data": "action:menu"}])
+    return {"inline_keyboard": rows}
+
+
+async def _receive_telegram_video(chat_id, user_id: str, message: dict, media: dict) -> None:
+    """Download a small Telegram video and register it in MediaNest's converter."""
+    services = _services
+    if any(job.get("status") == "running" for job in services["jobs"].values()):
+        await _send_message(chat_id, "একটি MediaNest processing job চলছে। সেটি শেষ হলে আবার ভিডিও পাঠাও।", _main_menu())
+        return
+    basename = Path(str(media.get("file_name") or "telegram-video.mp4")).name
+    suffix = Path(basename).suffix.lower()
+    is_video = bool(message.get("video")) or str(media.get("mime_type") or "").startswith("video/")
+    if suffix not in TELEGRAM_VIDEO_EXTENSIONS:
+        if is_video:
+            suffix = ".mp4"
+            basename = str(Path(basename).stem or "telegram-video") + suffix
+        else:
+            await _send_message(chat_id, "MP4, MOV, MKV, WebM, AVI, M4V, MPEG, MPG অথবা 3GP ভিডিও পাঠাও।", _main_menu())
+            return
+    try:
+        declared_size = int(media.get("file_size") or 0)
+    except (TypeError, ValueError):
+        declared_size = 0
+    if declared_size > TELEGRAM_DOWNLOAD_LIMIT:
+        await _send_message(chat_id, "Telegram Bot API দিয়ে 20 MB-এর বেশি ফাইল নামানো যায় না। ছোট ফাইল পাঠাও অথবা website Converter ব্যবহার করো।", _main_menu())
+        return
+    file_id = str(media.get("file_id") or "")
+    if not file_id:
+        await _send_message(chat_id, "Telegram video file ID পাওয়া যায়নি। আবার পাঠাও।", _main_menu())
+        return
+
+    media_id = token_hex(12)
+    directory = Path(services["TEMP_ROOT"]) / ("upload-telegram-" + media_id)
+    directory.mkdir(parents=True, exist_ok=False)
+    target = directory / ("source" + suffix)
+    try:
+        file_response = await _api("getFile", data={"file_id": file_id}, timeout=25.0)
+        file_info = file_response.get("result") if file_response.get("ok") else None
+        file_path = (file_info or {}).get("file_path")
+        if not file_path:
+            raise RuntimeError("Telegram could not prepare this file.")
+        try:
+            size = int((file_info or {}).get("file_size") or declared_size or 0)
+        except (TypeError, ValueError):
+            size = declared_size
+        if size > TELEGRAM_DOWNLOAD_LIMIT:
+            raise RuntimeError("Telegram Bot API download limit is 20 MB.")
+        download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        total = 0
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False) as client:
+            async with client.stream("GET", download_url) as response:
+                if response.status_code != 200:
+                    raise RuntimeError("Telegram file download failed.")
+                content_length = response.headers.get("content-length")
+                try:
+                    if content_length and int(content_length) > TELEGRAM_DOWNLOAD_LIMIT:
+                        raise RuntimeError("Telegram Bot API download limit is 20 MB.")
+                except ValueError:
+                    pass
+                with target.open("wb") as output:
+                    async for chunk in response.aiter_bytes(64 * 1024):
+                        total += len(chunk)
+                        if total > TELEGRAM_DOWNLOAD_LIMIT:
+                            raise RuntimeError("Telegram Bot API download limit is 20 MB.")
+                        output.write(chunk)
+        if not total:
+            raise RuntimeError("Empty video file.")
+        details = await asyncio.to_thread(services["probe_local_video"], target)
+        services["uploads"][media_id] = {
+            "id": media_id, "path": str(target), "directory": str(directory),
+            "filename": basename[:160], "created_at": time.time(),
+            "duration": details["duration"], "height": details["height"],
+            "qualities": details["qualities"], "has_audio": details["has_audio"],
+            "interface": "telegram", "telegram_user_id": user_id,
+        }
+        token = token_hex(4)
+        session = {
+            "owner": user_id, "media_id": media_id, "title": basename[:150],
+            "qualities": details["qualities"], "has_audio": details["has_audio"],
+            "duration": details["duration"], "created_at": time.time(), "trim": None,
+        }
+        _converter_sessions[token] = session
+        _prune_sessions()
+        await _send_message(
+            chat_id,
+            f"✅ ভিডিও inspect করা হয়েছে: {basename}\nSize: {total / (1024 * 1024):.1f} MB · Duration: {services['duration_text'](details['duration'])}\n\nMP4 quality বা MP3 বেছে নাও।",
+            _conversion_keyboard(token, session),
+        )
+    except asyncio.CancelledError:
+        import shutil
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
+    except Exception as exc:
+        import shutil
+        shutil.rmtree(directory, ignore_errors=True)
+        print(f"[telegram-converter] upload failed user={user_id} error={type(exc).__name__}")
+        detail = ("Telegram Bot API download limit is 20 MB." if "20 MB" in str(exc)
+                  else "এই ফাইলটি supported video হিসেবে পড়া যায়নি। MP4/MOV/MKV/WebM file দিয়ে চেষ্টা করো।")
+        await _send_message(chat_id, "❌ " + detail, _main_menu())
+
+
+async def _start_uploaded_conversion(chat_id, user_id: str, token: str, output_format: str, quality: str) -> None:
+    session = _converter_sessions.get(token)
+    if not session or session.get("owner") != user_id or time.time() - session.get("created_at", 0) > SESSION_TTL_SECONDS:
+        await _send_message(chat_id, "এই conversion selection-এর মেয়াদ শেষ। আবার ভিডিও পাঠাও।", _main_menu())
+        return
+    services = _services
+    media_id = session.get("media_id")
+    source = services["uploads"].get(media_id)
+    if not source or source.get("telegram_user_id") != user_id:
+        await _send_message(chat_id, "Uploaded video-এর মেয়াদ শেষ। আবার ভিডিও পাঠাও।", _main_menu())
+        return
+    if any(job.get("status") == "running" for job in services["jobs"].values()):
+        await _send_message(chat_id, "একটি MediaNest processing job চলছে। সেটি শেষ হলে আবার চেষ্টা করো।", _main_menu())
+        return
+    if output_format not in ("mp4", "mp3"):
+        await _send_message(chat_id, "Output format সমর্থিত নয়।", _main_menu())
+        return
+    if output_format == "mp3":
+        quality = "best"
+        if not source.get("has_audio"):
+            await _send_message(chat_id, "এই ভিডিওতে audio track নেই, তাই MP3 তৈরি করা যাবে না।", _main_menu())
+            return
+    elif quality != "best" and quality not in {str(q) for q in source.get("qualities", [])}:
+        await _send_message(chat_id, "এই video quality পাওয়া যাচ্ছে না। আবার ভিডিও পাঠাও।", _main_menu())
+        return
+    job_id = token_hex(10)
+    title = str(session.get("title") or "Telegram video")
+    services["jobs"][job_id] = {
+        "id": job_id, "status": "running", "progress": 0,
+        "message": "Telegram upload conversion শুরু হচ্ছে…", "created_at": time.time(),
+        "output_file": None, "title": title,
+        "filename": services["safe_download_filename"](title, output_format),
+        "interface": "telegram", "kind": "conversion", "format": output_format,
+        "upload_id": media_id, "telegram_user_id": user_id, "error_code": None,
+    }
+    _job_owners[job_id] = user_id
+    services["jobs"][job_id]["task"] = asyncio.create_task(
+        services["process_local_conversion"](job_id, media_id, quality, output_format, session.get("trim"))
+    )
+    sent = await _send_message(
+        chat_id, f"⏳ Conversion চলছে: {title}\nFormat: {output_format.upper()} · Quality: {quality}\nTrim: {'on' if session.get('trim') else 'off'}",
+        {"inline_keyboard": [[{"text": "📊 Status", "callback_data": "action:status"},
+                              {"text": "⛔ Cancel", "callback_data": f"cancel:{job_id}"}]]},
+    )
+    message_id = (sent.get("result") or {}).get("message_id")
+    _monitor_tasks[job_id] = asyncio.create_task(_monitor_job(chat_id, user_id, job_id, message_id))
+
+
+def _parse_trim_range(raw: str, duration: int | None):
+    if duration is None or duration < 600:
+        return None
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*[,;–-]\s*(\d+(?:\.\d+)?)\s*", raw)
+    if not match:
+        return None
+    start, end = float(match.group(1)), float(match.group(2))
+    if start < 0 or end <= start or end > duration or end - start < 1:
+        return None
+    return (start, end)
 
 
 async def _handle_callback(callback: dict) -> None:
