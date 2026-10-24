@@ -447,6 +447,9 @@ function loadJobs(){
    var track=document.createElement("div");track.className="history-progress";
    var fill=document.createElement("span");fill.style.width=pct+"%";track.appendChild(fill);card.appendChild(track);
    var progress=document.createElement("div");progress.className="history-message";progress.textContent=pct+"% · "+(job.message||"No status message");card.appendChild(progress);
+   if(job.error_code){
+    var error=document.createElement("div");error.className="history-message";error.textContent="Error: "+job.error_code+(job.recovery_hint?" · "+job.recovery_hint:"");error.setAttribute("role","note");card.appendChild(error);
+   }
    var actions=document.createElement("div");actions.className="history-actions";
    if(job.download_url){
     var a=document.createElement("a");a.className="btn";a.href=job.download_url;a.textContent="Download file";a.setAttribute("download",job.filename||"media");actions.appendChild(a);
