@@ -555,7 +555,7 @@ async def _receive_telegram_video(chat_id, user_id: str, message: dict, media: d
     except (TypeError, ValueError):
         declared_size = 0
     if declared_size > TELEGRAM_DOWNLOAD_LIMIT:
-        await _send_message(chat_id, "Telegram Bot API দিয়ে 20 MB-এর বেশি ফাইল নামানো যায় না। ছোট ফাইল পাঠাও অথবা website Converter ব্যবহার করো।", _main_menu())
+        await _send_message(chat_id, f"Telegram Bot API দিয়ে {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB-এর বেশি ফাইল নামানো যায় না। ছোট ফাইল পাঠাও অথবা website Converter ব্যবহার করো।", _main_menu())
         return
     file_id = str(media.get("file_id") or "")
     if not file_id:
@@ -577,7 +577,7 @@ async def _receive_telegram_video(chat_id, user_id: str, message: dict, media: d
         except (TypeError, ValueError):
             size = declared_size
         if size > TELEGRAM_DOWNLOAD_LIMIT:
-            raise RuntimeError("Telegram Bot API download limit is 20 MB.")
+            raise RuntimeError(f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB.")
         download_url = f"{TELEGRAM_API_BASE_URL}/file/bot{BOT_TOKEN}/{file_path}"
         total = 0
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False) as client:
@@ -627,8 +627,11 @@ async def _receive_telegram_video(chat_id, user_id: str, message: dict, media: d
         import shutil
         shutil.rmtree(directory, ignore_errors=True)
         print(f"[telegram-converter] upload failed user={user_id} error={type(exc).__name__}")
-        detail = ("Telegram Bot API download limit is 20 MB." if "20 MB" in str(exc)
-                  else "এই ফাইলটি supported video হিসেবে পড়া যায়নি। MP4/MOV/MKV/WebM file দিয়ে চেষ্টা করো।")
+        detail = (
+            f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB."
+            if "download limit is" in str(exc)
+            else "এই ফাইলটি supported video হিসেবে পড়া যায়নি। MP4/MOV/MKV/WebM file দিয়ে চেষ্টা করো।"
+        )
         await _send_message(chat_id, "❌ " + detail, _main_menu())
 
 
