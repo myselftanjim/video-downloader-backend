@@ -79,6 +79,10 @@ _video_sessions: dict[str, dict] = {}
 _converter_sessions: dict[str, dict] = {}
 _trim_waiting: dict[str, str] = {}
 _job_owners: dict[str, str] = {}
+# Compact per-user snapshots survive output-file cleanup for this process lifetime.
+# Durable history across Render restarts belongs in the separate storage/database phase.
+_job_history: dict[str, list[dict]] = {}
+HISTORY_LIMIT_PER_USER = 25
 _download_links: dict[str, dict] = {}
 _monitor_tasks: dict[str, asyncio.Task] = {}
 _background_tasks: set[asyncio.Task] = set()
@@ -159,7 +163,8 @@ def _main_menu() -> dict:
         [{"text": "🎞 Convert a video", "callback_data": "mode:convert"}],
         [{"text": "📊 My Jobs / Status", "callback_data": "action:status"},
          {"text": "⛔ Cancel Job", "callback_data": "action:cancel"}],
-        [{"text": "📦 File limits & help", "callback_data": "action:limits"}],
+        [{"text": "🗂 Job History", "callback_data": "action:history"},
+         {"text": "📦 File limits & help", "callback_data": "action:limits"}],
     ]}
 
 
@@ -205,6 +210,117 @@ def _owned_jobs(user_id: str) -> list[tuple[str, dict]]:
         if job and (owner == user_id or job.get("interface") == "website"):
             found.append((job_id, job))
     return sorted(found, key=lambda pair: pair[1].get("created_at", 0), reverse=True)[:8]
+
+
+def _history_file_available(entry: dict) -> bool:
+    path_text = entry.get("output_path")
+    if not path_text:
+        return False
+    try:
+        root = Path(_services["TEMP_ROOT"]).resolve()
+        resolved = Path(path_text).resolve()
+        return resolved.is_relative_to(root) and resolved.is_file()
+    except (OSError, KeyError, ValueError):
+        return False
+
+
+def _remember_job(user_id: str, job_id: str, job: dict, delivery: str | None = None) -> None:
+    """Save compact job metadata before temporary output cleanup removes the job."""
+    records = _job_history.setdefault(str(user_id), [])
+    existing = next((item for item in records if item.get("job_id") == job_id), None)
+    current_delivery = delivery if delivery is not None else (existing or {}).get("delivery")
+    path_text = job.get("output_file")
+    safe_path = None
+    if path_text:
+        try:
+            root = Path(_services["TEMP_ROOT"]).resolve()
+            candidate = Path(path_text).resolve()
+            if candidate.is_relative_to(root) and candidate.is_file():
+                safe_path = str(candidate)
+        except (OSError, KeyError, ValueError):
+            safe_path = None
+    if current_delivery == "sent_to_chat":
+        safe_path = None
+
+    snapshot = {
+        "job_id": str(job_id),
+        "title": str(job.get("title") or job.get("filename") or "MediaNest job")[:120],
+        "filename": str(job.get("filename") or "")[:180],
+        "status": str(job.get("status") or "unknown"),
+        "progress": max(0, min(100, int(job.get("progress") or 0))),
+        "kind": str(job.get("kind") or "media"),
+        "format": str(job.get("format") or ""),
+        "interface": str(job.get("interface") or "telegram"),
+        "created_at": float(job.get("created_at") or time.time()),
+        "updated_at": time.time(),
+        "delivery": current_delivery,
+        "output_path": safe_path,
+        "error_code": None,
+        "recovery_hint": None,
+    }
+    if snapshot["status"] == "failed":
+        details = _services.get("classify_job_error", lambda unused: None)(job) or {}
+        snapshot["error_code"] = details.get("error_code")
+        snapshot["recovery_hint"] = details.get("recovery_hint")
+    if existing:
+        existing.update(snapshot)
+        records.remove(existing)
+        records.insert(0, existing)
+    else:
+        records.insert(0, snapshot)
+    del records[HISTORY_LIMIT_PER_USER:]
+
+
+def _history_view(user_id: str, query: str = "") -> tuple[str, dict]:
+    """Render recent job snapshots and resend buttons for outputs still on disk."""
+    for job_id, job in _owned_jobs(user_id):
+        _remember_job(user_id, job_id, job)
+
+    entries = list(_job_history.get(str(user_id), []))
+    needle = query.strip().lower()
+    if needle:
+        entries = [
+            item for item in entries
+            if needle in " ".join(str(item.get(key) or "") for key in
+                                  ("job_id", "title", "filename", "status", "kind", "format", "interface")).lower()
+        ]
+    entries = entries[:10]
+    if not entries:
+        message = "এই search-এর সঙ্গে মেলা কোনো পুরোনো job নেই।" if needle else (
+            "এখনো কোনো job history নেই। Download শুরু করলে এখানে দেখা যাবে।"
+        )
+        return message, _main_menu()
+
+    lines = ["🗂 MediaNest · Recent Job History"]
+    rows = []
+    for item in entries:
+        job_id = item["job_id"]
+        status = str(item.get("status") or "unknown").upper()
+        title = str(item.get("title") or "MediaNest job")[:64]
+        surface = "Website" if item.get("interface") == "website" else "Telegram"
+        lines.append(f"• {title}\n  {surface} · {status} · {int(item.get('progress') or 0)}%")
+        if status == "FAILED":
+            if item.get("error_code"):
+                lines.append(f"  Error: {item['error_code']}")
+            if item.get("recovery_hint"):
+                lines.append(f"  পরামর্শ: {str(item['recovery_hint'])[:180]}")
+        if item.get("delivery") == "sent_to_chat":
+            lines.append("  ✅ ফাইল Telegram chat-এ পাঠানো হয়েছিল; মূল attachment message থেকে আবার নামাও।")
+        elif _history_file_available(item) and status == "COMPLETED":
+            rows.append([{"text": f"📤 আবার Telegram-এ পাঠাও · {job_id[:6]}",
+                          "callback_data": f"send:{job_id}"}])
+        elif status == "COMPLETED":
+            lines.append("  ℹ️ Temporary file আর নেই; প্রয়োজন হলে নতুন করে download করো।")
+        elif item.get("delivery") == "temporary_link":
+            lines.append("  🔗 আগে temporary link দেওয়া হয়েছিল; ফাইলটি এখনও থাকলে resend করা যাবে।")
+    rows.append([{"text": "🔄 Refresh", "callback_data": "action:history"},
+                 {"text": "⬅️ Menu", "callback_data": "action:menu"}])
+    return "\n".join(lines), {"inline_keyboard": rows}
+
+
+async def _show_history(chat_id, user_id: str, query: str = "") -> None:
+    text, keyboard = _history_view(user_id, query)
+    await _send_message(chat_id, text, keyboard)
 
 
 async def _show_status(chat_id, user_id: str) -> None:
