@@ -169,6 +169,10 @@ async def _show_status(chat_id, user_id: str) -> None:
         title = str(job.get("title") or job.get("filename") or "Media job")[:70]
         surface = "Website" if job.get("interface") == "website" else "Telegram"
         lines.append(f"• {title}\n  {surface} · {status} · {progress}%")
+        if status == "FAILED":
+            details = _services.get("classify_job_error", lambda unused: None)(job) or {}
+            if details.get("error_code"):
+                lines.append(f"  Error: {details.get('error_code')} — {details.get('recovery_hint', '')}")
         if status == "RUNNING" and (_job_owners.get(job_id) == user_id or job.get("interface") == "website"):
             rows.append([{"text": f"Cancel {job_id[:6]}", "callback_data": f"cancel:{job_id}"}])
         elif status == "COMPLETED" and job.get("output_file"):
@@ -382,7 +386,13 @@ async def _monitor_job(chat_id, user_id: str, job_id: str, message_id) -> None:
                 await _send_message(chat_id, "কাজ শেষ হয়েছে, কিন্তু output file পাওয়া যায়নি।", _main_menu())
                 return
             if status in ("failed", "cancelled", "expired"):
-                await _send_message(chat_id, f"❌ {str(job.get('message') or status)[:700]}", _main_menu())
+                if status == "failed":
+                    details = _services.get("classify_job_error", lambda unused: None)(job) or {}
+                    code = f" [{details.get('error_code')}]" if details.get("error_code") else ""
+                    hint = f"\nপরামর্শ: {details.get('recovery_hint')}" if details.get("recovery_hint") else ""
+                    await _send_message(chat_id, f"❌{code} {str(job.get('message') or status)[:550]}{hint}", _main_menu())
+                else:
+                    await _send_message(chat_id, f"❌ {str(job.get('message') or status)[:700]}", _main_menu())
                 return
             await asyncio.sleep(2.5)
         await _send_message(chat_id, "Job monitor-এর সময়সীমা শেষ হয়েছে। /status দিয়ে বর্তমান অবস্থা দেখো।", _main_menu())
