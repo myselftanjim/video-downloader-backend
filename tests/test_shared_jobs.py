@@ -76,6 +76,21 @@ def test_job_error_classifier_returns_actionable_codes():
     }) is None
 
 
+def test_telegram_limits_help_explains_chat_retention_and_temporary_links():
+    from telegram_bot import _limits_text, _main_menu
+
+    text = _limits_text()
+    assert "chat-এ থাকবে" in text
+    assert "১৫ মিনিট" in text
+    assert "20 MB" in text
+    callbacks = [
+        button["callback_data"]
+        for row in _main_menu()["inline_keyboard"]
+        for button in row
+    ]
+    assert "action:limits" in callbacks
+
+
 def test_telegram_hosted_and_local_api_file_limits_are_bounded():
     from telegram_bot import _telegram_file_limits
 
