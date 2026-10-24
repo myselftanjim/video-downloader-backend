@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
+from telegram_bot import router as telegram_router, configure_telegram, startup_telegram
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -104,6 +105,7 @@ login_attempts = {}
 
 app = FastAPI(title="MediaNest", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.include_router(telegram_router)
 
 
 class LoginBody(BaseModel):
@@ -1779,3 +1781,24 @@ async def _clipnest_optional_ytdlp_smoke_test():
 
     asyncio.create_task(run_once())
 
+
+
+# Phase A Telegram interface: reuse the same in-process MediaNest job engine.
+configure_telegram({
+    "jobs": jobs,
+    "TEMP_ROOT": TEMP_ROOT,
+    "normalize_source_url": normalize_source_url,
+    "normalize_image_source_url": normalize_image_source_url,
+    "get_video_info": lambda url: info(URLBody(url=url)),
+    "process_download": process_download,
+    "process_image_download": process_image_download,
+    "safe_download_filename": safe_download_filename,
+    "safe_image_basename": safe_image_basename,
+    "cancel_job": cancel_job,
+    "clean_after_download": clean_after_download,
+})
+
+
+@app.on_event("startup")
+async def _configure_telegram_bot_webhook():
+    await startup_telegram()
