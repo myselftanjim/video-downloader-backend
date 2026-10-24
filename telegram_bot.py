@@ -129,9 +129,10 @@ def _mode_menu() -> dict:
 def _cancel_keyboard(user_id: str) -> dict | None:
     jobs = _services.get("jobs", {})
     rows = []
-    for job_id, owner in list(_job_owners.items()):
-        job = jobs.get(job_id)
-        if owner == user_id and job and job.get("status") == "running":
+    for job_id, job in list(jobs.items()):
+        owner = _job_owners.get(job_id)
+        shared_website_job = job.get("interface") == "website"
+        if job and job.get("status") == "running" and (owner == user_id or shared_website_job):
             rows.append([{"text": f"Cancel {str(job.get('title') or job_id)[:24]}",
                           "callback_data": f"cancel:{job_id}"}])
     return {"inline_keyboard": rows} if rows else None
@@ -140,11 +141,13 @@ def _cancel_keyboard(user_id: str) -> dict | None:
 def _owned_jobs(user_id: str) -> list[tuple[str, dict]]:
     jobs = _services.get("jobs", {})
     found = []
-    for job_id, owner in list(_job_owners.items()):
-        job = jobs.get(job_id)
-        if owner == user_id and job:
+    for job_id, job in list(jobs.items()):
+        owner = _job_owners.get(job_id)
+        # The bot is private and allowlisted. Website jobs are shared in the same
+        # MediaNest workspace so the user can inspect and manage them here too.
+        if job and (owner == user_id or job.get("interface") == "website"):
             found.append((job_id, job))
-    return sorted(found, key=lambda pair: pair[1].get("created_at", 0), reverse=True)[:5]
+    return sorted(found, key=lambda pair: pair[1].get("created_at", 0), reverse=True)[:8]
 
 
 async def _show_status(chat_id, user_id: str) -> None:
@@ -159,9 +162,12 @@ async def _show_status(chat_id, user_id: str) -> None:
         status = str(job.get("status", "unknown")).upper()
         progress = int(job.get("progress") or 0)
         title = str(job.get("title") or job.get("filename") or "Media job")[:70]
-        lines.append(f"• {title}\n  {status} · {progress}%")
-        if status == "RUNNING":
+        surface = "Website" if job.get("interface") == "website" else "Telegram"
+        lines.append(f"• {title}\n  {surface} · {status} · {progress}%")
+        if status == "RUNNING" and (_job_owners.get(job_id) == user_id or job.get("interface") == "website"):
             rows.append([{"text": f"Cancel {job_id[:6]}", "callback_data": f"cancel:{job_id}"}])
+        elif status == "COMPLETED" and job.get("output_file"):
+            rows.append([{"text": f"📤 Send {job_id[:6]} to Telegram", "callback_data": f"send:{job_id}"}])
     rows.append([{"text": "⬅️ Menu", "callback_data": "action:menu"}])
     await _send_message(chat_id, "\n".join(lines), {"inline_keyboard": rows})
 
@@ -203,6 +209,7 @@ async def _process_url(chat_id, user_id: str, raw_url: str, mode: str) -> None:
                 "id": job_id, "status": "running", "progress": 0,
                 "message": "Starting image extraction…", "created_at": time.time(),
                 "output_file": None, "title": requested_name, "filename": None,
+                "interface": "telegram", "kind": "image", "format": "zip-or-image",
             }
             _job_owners[job_id] = user_id
             jobs[job_id]["task"] = asyncio.create_task(
@@ -294,6 +301,7 @@ async def _start_video_download(chat_id, user_id: str, token: str, output_format
             "id": job_id, "status": "running", "progress": 0,
             "message": "কাজ শুরু হচ্ছে…", "created_at": time.time(),
             "output_file": None, "title": title, "filename": filename,
+            "interface": "telegram", "kind": "video", "format": output_format,
         }
         _job_owners[job_id] = user_id
         jobs[job_id]["task"] = asyncio.create_task(
@@ -408,6 +416,42 @@ def _mark_download_link_used(token: str) -> None:
             _download_links.pop(token, None)
 
 
+async def _send_shared_job(chat_id, user_id: str, job_id: str) -> None:
+    job = _services.get("jobs", {}).get(job_id)
+    if not job or job.get("status") != "completed" or not job.get("output_file"):
+        await _send_message(chat_id, "এই job-এর output আর পাওয়া যাচ্ছে না।", _main_menu())
+        return
+    path = Path(job["output_file"])
+    try:
+        root = Path(_services["TEMP_ROOT"]).resolve()
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            raise OSError("output missing")
+        size = resolved.stat().st_size
+    except OSError:
+        await _send_message(chat_id, "Output file পাওয়া যাচ্ছে না। নতুন করে download করো।", _main_menu())
+        return
+    if size <= TELEGRAM_UPLOAD_LIMIT:
+        result = await _send_document(chat_id, resolved, job.get("filename") or resolved.name)
+        if result.get("ok"):
+            # Keep website-generated results available in the website after Telegram shares them.
+            if job.get("interface") == "telegram":
+                _services["clean_after_download"](job_id)
+            await _send_message(chat_id, "✅ ফাইল Telegram-এ পাঠানো হয়েছে।", _main_menu())
+            return
+    link = _create_download_link(job_id, user_id)
+    if link:
+        await _send_message(
+            chat_id,
+            f"ফাইলের size {size / (1024 * 1024):.1f} MB অথবা Telegram upload ব্যর্থ হয়েছে। "
+            f"এই temporary link ১৫ মিনিট থাকবে, সর্বোচ্চ ৩ বার ব্যবহার করা যাবে:\n{link}",
+            _main_menu(),
+        )
+    else:
+        await _send_message(chat_id, "ফাইলটি Telegram-এ পাঠানো যায়নি। ওয়েবসাইটের Jobs tab থেকে ডাউনলোড করো।",
+                            _main_menu())
+
+
 async def _handle_callback(callback: dict) -> None:
     callback_id = callback.get("id")
     user = callback.get("from") or {}
@@ -450,12 +494,20 @@ async def _handle_callback(callback: dict) -> None:
             _, token, output_format, quality = pieces
             await _start_video_download(chat_id, user_id, token, output_format, quality)
         return
+    if data.startswith("send:"):
+        job_id = data.split(":", 1)[1]
+        job = _services.get("jobs", {}).get(job_id)
+        if _job_owners.get(job_id) != user_id and not (job and job.get("interface") == "website"):
+            await _send_message(chat_id, "এই job-এর ফাইল নেওয়ার অনুমতি নেই।", _main_menu())
+            return
+        await _send_shared_job(chat_id, user_id, job_id)
+        return
     if data.startswith("cancel:"):
         job_id = data.split(":", 1)[1]
-        if _job_owners.get(job_id) != user_id:
+        job = _services.get("jobs", {}).get(job_id)
+        if _job_owners.get(job_id) != user_id and not (job and job.get("interface") == "website"):
             await _send_message(chat_id, "এই job বাতিল করার অনুমতি নেই।", _main_menu())
             return
-        job = _services.get("jobs", {}).get(job_id)
         if not job or job.get("status") != "running":
             await _send_message(chat_id, "এই job আর running নেই।", _main_menu())
             return
