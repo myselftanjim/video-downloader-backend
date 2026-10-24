@@ -381,24 +381,36 @@ function selectLocalFile(file, alreadyInInput){
  setMsg("appMsg","Video selected. Review the preview, then upload when ready.","success");
 }
 
-var activeView="downloader";
-function setActiveView(view){
- if(view===activeView)return;
- if(currentJob||jobStarting){
-  setMsg("appMsg","Finish or cancel the current job before switching tools.","error");
-  return;
- }
- activeView=view;
+var activeView="downloader", previousToolView="downloader", jobsRefreshHandle=null, jobsLoading=false;
+function updateViewVisibility(view){
  el("heroSection").classList.toggle("hidden",view!=="downloader");
  el("downloaderView").classList.toggle("hidden",view!=="downloader");
  el("imagesView").classList.toggle("hidden",view!=="images");
  el("converterView").classList.toggle("hidden",view!=="converter");
- el("downloaderTab").classList.toggle("active",view==="downloader");
- el("imagesTab").classList.toggle("active",view==="images");
- el("converterTab").classList.toggle("active",view==="converter");
- el("downloaderTab").setAttribute("aria-selected",String(view==="downloader"));
- el("imagesTab").setAttribute("aria-selected",String(view==="images"));
- el("converterTab").setAttribute("aria-selected",String(view==="converter"));
+ el("jobsView").classList.toggle("hidden",view!=="jobs");
+ ["downloader","images","converter","jobs"].forEach(function(name){
+  var tab=el(name+"Tab");
+  tab.classList.toggle("active",view===name);
+  tab.setAttribute("aria-selected",String(view===name));
+ });
+}
+function setActiveView(view){
+ if(view===activeView){if(view==="jobs")loadJobs();return}
+ if(view==="jobs"){
+  previousToolView=activeView==="jobs"?previousToolView:activeView;
+  activeView="jobs";updateViewVisibility(view);loadJobs();return;
+ }
+ if(activeView==="jobs"&&currentJob){
+  if(view!==previousToolView){
+   setMsg("appMsg","A job is still running. Return to its original tool or cancel it from Jobs.","error");return;
+  }
+  activeView=view;updateViewVisibility(view);return;
+ }
+ if(currentJob||jobStarting){
+  setMsg("appMsg","Finish or cancel the current job before switching tools, or open Jobs to manage it.","error");
+  return;
+ }
+ activeView=view;updateViewVisibility(view);
  currentInfo=null;mediaSource="url";uploadedMediaId=null;jobMode="media";lastImageRequest=null;
  el("url").value="";el("imageUrl").value="";el("imageName").value="";el("imageMsg").textContent="";
  el("localFile").value="";el("selectedFileName").textContent="No file selected";el("uploadBtn").disabled=true;clearLocalPreview();
@@ -409,6 +421,57 @@ function setActiveView(view){
 el("downloaderTab").addEventListener("click",function(){setActiveView("downloader")});
 el("imagesTab").addEventListener("click",function(){setActiveView("images")});
 el("converterTab").addEventListener("click",function(){setActiveView("converter")});
+el("jobsTab").addEventListener("click",function(){setActiveView("jobs")});
+function historyButton(label,variant,onClick){
+ var b=document.createElement("button");b.type="button";b.className="btn "+(variant||"secondary");b.textContent=label;b.addEventListener("click",onClick);return b;
+}
+function loadJobs(){
+ if(jobsLoading)return;
+ jobsLoading=true;
+ api("/api/jobs").then(function(data){
+  var list=el("jobsList");list.textContent="";
+  var jobs=data.jobs||[];
+  el("jobsSummary").textContent=jobs.length+" recent job(s) · website + Telegram";
+  if(!jobs.length){
+   var empty=document.createElement("div");empty.className="hint";empty.textContent="No recent jobs yet. Start a video or image job first.";list.appendChild(empty);
+  }
+  jobs.forEach(function(job){
+   var card=document.createElement("article");card.className="history-card";
+   var title=document.createElement("div");title.className="history-title";title.textContent=job.title||job.filename||"MediaNest job";card.appendChild(title);
+   var meta=document.createElement("div");meta.className="history-meta";
+   [String(job.status||"unknown").toUpperCase(),job.interface==="telegram"?"Telegram":job.interface==="website"?"Website":"System",job.kind||"media",job.format||""].filter(Boolean).forEach(function(tag){
+    var span=document.createElement("span");span.textContent=tag;meta.appendChild(span);
+   });
+   card.appendChild(meta);
+   var pct=Math.max(0,Math.min(100,Number(job.progress)||0));
+   var track=document.createElement("div");track.className="history-progress";
+   var fill=document.createElement("span");fill.style.width=pct+"%";track.appendChild(fill);card.appendChild(track);
+   var progress=document.createElement("div");progress.className="history-message";progress.textContent=pct+"% · "+(job.message||"No status message");card.appendChild(progress);
+   var actions=document.createElement("div");actions.className="history-actions";
+   if(job.download_url){
+    var a=document.createElement("a");a.className="btn";a.href=job.download_url;a.textContent="Download file";a.setAttribute("download",job.filename||"media");actions.appendChild(a);
+   }
+   if(job.can_cancel){
+    actions.appendChild(historyButton("Cancel job","ghost",function(ev){
+     var button=ev.currentTarget;button.disabled=true;
+     api("/api/jobs/"+encodeURIComponent(job.id)+"/cancel",{method:"POST"}).then(function(){
+      el("jobsMessage").textContent="Cancel request sent.";loadJobs();
+     }).catch(function(err){el("jobsMessage").textContent=err.message;button.disabled=false;});
+    }));
+   }
+   if(job.filename){
+    var filename=document.createElement("div");filename.className="history-message";filename.textContent="File: "+job.filename;card.appendChild(filename);
+   }
+   if(actions.childNodes.length)card.appendChild(actions);
+   list.appendChild(card);
+  });
+  el("jobsMessage").textContent=jobs.some(function(job){return job.status==="running"})?"A job is processing. This list refreshes automatically.":"Recent job status loaded.";
+  if(jobsRefreshHandle){clearTimeout(jobsRefreshHandle);jobsRefreshHandle=null}
+  if(activeView==="jobs"&&data.running)jobsRefreshHandle=setTimeout(function(){jobsLoading=false;loadJobs()},3000);
+ }).catch(function(err){el("jobsMessage").textContent="Could not load jobs: "+err.message;})
+ .finally(function(){jobsLoading=false});
+}
+el("refreshJobsBtn").addEventListener("click",loadJobs);
 async function checkSession(){
  try{var data=await api("/api/session");setAuth(Boolean(data.authenticated))}
  catch(e){setAuth(false)}
