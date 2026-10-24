@@ -89,6 +89,57 @@ def test_telegram_limits_help_explains_chat_retention_and_temporary_links():
         for button in row
     ]
     assert "action:limits" in callbacks
+    assert "action:history" in callbacks
+
+
+def test_telegram_history_keeps_delivery_record_after_temporary_file_cleanup(tmp_path):
+    import telegram_bot
+
+    original_services = telegram_bot._services.copy()
+    original_history = {key: [dict(item) for item in value]
+                        for key, value in telegram_bot._job_history.items()}
+    original_owners = telegram_bot._job_owners.copy()
+    jobs = {}
+    output_dir = tmp_path / "history-job"
+    output_dir.mkdir()
+    output = output_dir / "result.mp4"
+    output.write_bytes(b"fake-output")
+    jobs["history-job-123"] = {
+        "id": "history-job-123", "status": "completed", "progress": 100,
+        "created_at": time.time(), "title": "Beach House Video",
+        "filename": "beach-house.mp4", "output_file": str(output),
+        "interface": "telegram", "kind": "video", "format": "mp4",
+    }
+    telegram_bot.configure_telegram({"jobs": jobs, "TEMP_ROOT": tmp_path})
+    telegram_bot._job_history.clear()
+    telegram_bot._job_owners["history-job-123"] = "456"
+    try:
+        text, keyboard = telegram_bot._history_view("456")
+        assert "Beach House Video" in text
+        assert "COMPLETED" in text
+        callbacks = [
+            button["callback_data"]
+            for row in keyboard["inline_keyboard"]
+            for button in row
+        ]
+        assert "send:history-job-123" in callbacks
+
+        telegram_bot._remember_job("456", "history-job-123", jobs["history-job-123"],
+                                   delivery="sent_to_chat")
+        jobs.clear()
+        output.unlink()
+
+        text, _ = telegram_bot._history_view("456")
+        assert "Beach House Video" in text
+        assert "Telegram chat-এ পাঠানো হয়েছিল" in text
+        filtered, _ = telegram_bot._history_view("456", "not-a-video")
+        assert "মেলা কোনো পুরোনো job নেই" in filtered
+    finally:
+        telegram_bot.configure_telegram(original_services)
+        telegram_bot._job_history.clear()
+        telegram_bot._job_history.update(original_history)
+        telegram_bot._job_owners.clear()
+        telegram_bot._job_owners.update(original_owners)
 
 
 def test_telegram_hosted_and_local_api_file_limits_are_bounded():
