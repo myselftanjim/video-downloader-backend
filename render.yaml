@@ -24,3 +24,9 @@ services:
         sync: false
       - key: TELEGRAM_WEBHOOK_URL
         sync: false
+      - key: TELEGRAM_API_BASE_URL
+        sync: false
+      - key: TELEGRAM_UPLOAD_LIMIT_MB
+        sync: false
+      - key: TELEGRAM_DOWNLOAD_LIMIT_MB
+        sync: false
