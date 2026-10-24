@@ -164,7 +164,7 @@ def test_telegram_hosted_and_local_api_file_limits_are_bounded():
     capped_upload, capped_download = _telegram_file_limits(
         "http://localhost:8081", upload_mb="9999", download_mb="-3"
     )
-    assert capped_upload == 1900 * 1024 * 1024
+    assert capped_upload == 2000 * 1024 * 1024
     assert capped_download == 1 * 1024 * 1024
 
 
@@ -225,6 +225,47 @@ def test_telegram_converter_rejects_files_over_hosted_bot_api_limit(tmp_path, mo
     assert messages
     assert "20 MB" in messages[0]
     assert list(tmp_path.iterdir()) == []
+
+
+def test_telegram_local_api_absolute_file_path_uses_only_configured_shared_root(tmp_path, monkeypatch):
+    import telegram_bot
+
+    original_services = telegram_bot._services.copy()
+    original_root = telegram_bot.TELEGRAM_LOCAL_FILE_ROOT
+    api_root = tmp_path / "api-data"
+    api_root.mkdir()
+    source_video = api_root / "video.mp4"
+    source_video.write_bytes(b"shared-volume-video")
+    temp_root = tmp_path / "medianest-temp"
+    temp_root.mkdir()
+    messages = []
+    
+    async def fake_api(method, *, data=None, files=None, timeout=20.0):
+        return {"ok": True, "result": {"file_path": str(source_video), "file_size": source_video.stat().st_size}}
+    
+    async def fake_send(chat_id, text, reply_markup=None):
+        messages.append((text, reply_markup))
+        return {"ok": True}
+    
+    def probe_video(path):
+        assert path.read_bytes() == b"shared-volume-video"
+        return {"duration": 60, "height": 360, "qualities": [360], "has_audio": True}
+    
+    monkeypatch.setattr(telegram_bot, "_api", fake_api)
+    monkeypatch.setattr(telegram_bot, "_send_message", fake_send)
+    monkeypatch.setattr(telegram_bot, "TELEGRAM_LOCAL_FILE_ROOT", str(api_root))
+    telegram_bot.configure_telegram({
+        "jobs": {}, "uploads": {}, "TEMP_ROOT": temp_root,
+        "probe_local_video": probe_video, "duration_text": lambda value: "1:00",
+    })
+    try:
+        media = {"file_id": "file-id", "file_size": source_video.stat().st_size, "file_name": "video.mp4"}
+        asyncio.run(telegram_bot._receive_telegram_video(123, "456", {"video": media}, media))
+        assert len(telegram_bot._services["uploads"]) == 1
+        assert messages and "inspect" in messages[-1][0]
+    finally:
+        telegram_bot.configure_telegram(original_services)
+        telegram_bot.TELEGRAM_LOCAL_FILE_ROOT = original_root
 
 
 def test_telegram_converter_trim_buttons_hidden_for_short_video():
