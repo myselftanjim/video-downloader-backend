@@ -54,6 +54,17 @@ The bot intentionally works only in private chats and only for user IDs in the a
 - The /api/jobs endpoint exposes only safe job metadata, not filesystem paths, process objects, or internal task handles, and requires the website session.
 
 
+
+## Phase C — Telegram Upload Converter and Actionable Errors
+
+- In a private chat, choose **Convert a video** or send \`/convert\`, then upload a supported video file (MP4, MOV, MKV, WebM, AVI, M4V, MPEG, MPG, or 3GP).
+- The bot downloads the upload via Telegram \`getFile\`, inspects duration/resolution/audio, then offers MP4 resolution options and MP3 when an audio track exists.
+- For videos at least 10 minutes long, users can optionally submit a trim range in seconds (for example \`15,45\`) before selecting the output format.
+- The general hosted Telegram Bot API has a 20 MB download limit for bot file downloads; larger files should use the website Converter (up to its configured upload limit).
+- Failed jobs expose safe error categories such as \`PROCESSING_TIMEOUT\`, \`FILE_SIZE_LIMIT\`, \`SOURCE_ACCESS_RESTRICTED\`, \`CONVERSION_FAILED\`, and \`MEDIA_NOT_FOUND\`, with a suggested next step.
+- CI runs Python compile/import checks, route assertions, shared-job/error/trim tests, and JavaScript syntax validation.
+
+
 ## Known limitations
 
 - YouTube may reject requests from shared cloud IPs with “Sign in to confirm you're not a bot.” MediaNest now displays a plain-language explanation. It does not bypass bot checks or authentication controls. For videos you own, use YouTube Studio or Google Takeout to download the file, then upload the file into MediaNest for processing.
