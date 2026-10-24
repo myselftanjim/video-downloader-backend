@@ -811,8 +811,11 @@ async def _handle_message(message: dict) -> None:
         return
     raw_url = match.group(0).rstrip(".,);]")
     mode = _user_modes.pop(user_id, None)
-    if mode:
+    if mode in ("video", "image"):
         _spawn(_process_url(chat_id, user_id, raw_url, mode))
+    elif mode == "convert":
+        _user_modes[user_id] = "convert"
+        await _send_message(chat_id, "Converter-এর জন্য public URL নয়, সরাসরি video file পাঠাও।", _main_menu())
     else:
         _pending_urls[user_id] = raw_url
         await _send_message(chat_id, "লিংক পেয়েছি। কী download করতে চাও?", _mode_menu())
