@@ -40,7 +40,7 @@ Configure these variables in Render (never commit the bot token):
 - \`TELEGRAM_WEBHOOK_SECRET\`: random secret containing only letters, numbers, underscores or hyphens.
 - \`TELEGRAM_WEBHOOK_URL\`: public HTTPS URL ending in \`/telegram/webhook\`, for example \`https://medianest.reelsbytanjim.com/telegram/webhook\` if that domain is live.
 
-On startup, MediaNest calls Telegram's \`setWebhook\` method. In a private chat, the allowlisted user can choose Video or Image, paste a public URL, choose an available MP4 quality or MP3, check job status, or cancel their own running job. With Telegram's hosted API, generated files up to 47 MiB are sent as attachments that remain in the Telegram chat; larger outputs use an expiring temporary link. Optionally, `TELEGRAM_API_BASE_URL` can point to a self-hosted Telegram Local Bot API server; then the bot can handle much larger uploads/downloads within the configured limits.
+On startup, MediaNest calls Telegram's \`setWebhook\` method. In a private chat, the allowlisted user can choose Video or Image, paste a public URL, choose an available MP4 quality or MP3, check job status, or cancel their own running job. Files up to the configured Telegram limit are sent as chat attachments; the Telegram message remains available in the conversation unless it is deleted. Larger outputs use an expiring temporary link on the hosted API.
 
 The bot intentionally works only in private chats and only for user IDs in the allowlist. Job state and temporary links are in memory, so a Render restart clears them. Phase A needs a real deployment and live tests before it can be considered operational.
 
@@ -55,13 +55,21 @@ The bot intentionally works only in private chats and only for user IDs in the a
 
 
 
+## Telegram usability enhancements
+
+- `/history` (optional search, e.g. `/history beach`) shows up to 10 entries from the latest 25 in-memory job snapshots, including failures, file delivery state and a resend button when the server output still exists.
+- `/status`, `/limits`, `/cancel` and menu buttons expose the current job status, configured file limits and cancellation flow.
+- When an output is successfully sent as an attachment, the history record remembers that state before the temporary server copy is cleaned up. The attachment remains in Telegram chat; use the original message to download it again.
+- Bot-side history is not durable: Render restarts/redeploys clear in-memory snapshots. The website jobs and temporary files also remain subject to their existing expiry.
+
 ## Phase C — Telegram Upload Converter and Actionable Errors
 
 - In a private chat, choose **Convert a video** or send \`/convert\`, then upload a supported video file (MP4, MOV, MKV, WebM, AVI, M4V, MPEG, MPG, or 3GP).
 - The bot downloads the upload via Telegram \`getFile\`, inspects duration/resolution/audio, then offers MP4 resolution options and MP3 when an audio track exists.
 - For videos at least 10 minutes long, users can optionally submit a trim range in seconds (for example \`15,45\`) before selecting the output format.
 - The general hosted Telegram Bot API has a 20 MB incoming-file download limit and a 50 MB outgoing-file upload limit. MediaNest keeps a safety margin by sending files up to 47 MiB directly to the Telegram chat; larger outputs use a temporary link.
-- Optional large-file mode: configure `TELEGRAM_API_BASE_URL` to a reachable, self-hosted Telegram Local Bot API server. In that mode, the code defaults to 400 MB input/output limits (matching MediaNest's default processing cap); `TELEGRAM_DOWNLOAD_LIMIT_MB` and `TELEGRAM_UPLOAD_LIMIT_MB` can lower or raise those limits up to 1900 MB. This requires deploying and securing the separate Local Bot API service; changing environment variables alone does not provide a server.
+- Optional large-file mode: configure `TELEGRAM_API_BASE_URL` to a reachable, self-hosted Telegram Local Bot API server. In that mode, the code defaults to 400 MB input/output limits; `TELEGRAM_DOWNLOAD_LIMIT_MB` and `TELEGRAM_UPLOAD_LIMIT_MB` can be configured up to 2000 MB. Telegram's official local server limit is 2000 MB. This requires a separate secured server; changing environment variables alone does not provide one.
+- In Local Bot API `--local` mode, `getFile` returns an absolute path from the API server's own disk. To convert incoming files larger than 20 MB, the same persistent volume must be mounted into MediaNest at the same path and `TELEGRAM_LOCAL_FILE_ROOT` must be set. Without a shared volume, Local Bot API can be used for large outgoing attachments, but not directly for large incoming Converter uploads from a separate Render service. See [Local Bot API deployment guide](deploy/local-bot-api/README.md).
 - Failed jobs expose safe error categories such as \`PROCESSING_TIMEOUT\`, \`FILE_SIZE_LIMIT\`, \`SOURCE_ACCESS_RESTRICTED\`, \`CONVERSION_FAILED\`, and \`MEDIA_NOT_FOUND\`, with a suggested next step.
 - CI runs Python compile/import checks, route assertions, shared-job/error/trim tests, and JavaScript syntax validation.
 
