@@ -65,7 +65,7 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 2. **Video Download** বেছে একটি public video link পাঠাও। Bot-এর দেওয়া quality/format বেছে নাও।
 3. **Image Download** বেছে একটি public post/image link পরীক্ষা করো।
 4. **My Jobs / Status** ও **Cancel Job**-ও পরীক্ষা করো।
-5. 49 MiB-এর চেয়ে বড় output Telegram-এ ফাইল হিসেবে পাঠানো যাবে না; bot ১৫ মিনিট মেয়াদি temporary link দেওয়ার চেষ্টা করবে। Render restart হলে চলমান job বা in-memory link হারিয়ে যেতে পারে।
+5. 47 MiB-এর চেয়ে বড় output Telegram-এ ফাইল হিসেবে পাঠানো যাবে না; bot ১৫ মিনিট মেয়াদি temporary link দেওয়ার চেষ্টা করবে। Render restart হলে চলমান job বা in-memory link হারিয়ে যেতে পারে।
 
 ### কী কী এখনো বাকি
 কোড GitHub-এ push করা থাকলেও live deployment ও Telegram end-to-end test না হওয়া পর্যন্ত bot-কে fully working ধরা যাবে না। Bot private chat এবং allowlisted user ID-তেই কাজ করে; private/login-required content বা platform access control bypass করে না।
