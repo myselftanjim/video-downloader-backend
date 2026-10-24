@@ -80,6 +80,22 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 - Job history এখনো RAM-এ থাকে, প্রায় ৩০ মিনিটে মুছে যায় এবং Render restart হলে হারিয়ে যায়। Permanent job history বা persistent cloud file storage Phase B-র অংশ নয়; সেটা পরের পর্যায়ের কাজ।
 
 
+
+## Phase C — Telegram থেকে Video Convert
+
+1. Telegram Bot-এর menu থেকে **Convert a video** চাপো, অথবা \`/convert\` পাঠাও।
+2. MP4, MOV, MKV, WebM, AVI, M4V, MPEG, MPG অথবা 3GP video file পাঠাও।
+3. Bot video inspect করে duration, audio আছে কি না এবং resolution দেখে MP4 quality ও MP3 option দেখাবে।
+4. ১০ মিনিট বা তার বেশি duration হলে **Trim then convert** চাপতে পারবে। এরপর start,end seconds পাঠাও; যেমন \`15,45\`।
+5. Output format ও quality বেছে নাও। Bot progress দেখাবে এবং কাজ শেষে file পাঠানোর চেষ্টা করবে; বড় output হলে temporary link দিতে পারে।
+
+**Telegram file limit:** সাধারণ hosted Bot API দিয়ে bot সর্বোচ্চ ২০ MB পর্যন্ত incoming file download করতে পারে। এর বেশি হলে website-এর Converter ব্যবহার করো; website upload limit বর্তমানে ৯০ MB। Telegram file limits: https://core.telegram.org/bots/faq
+
+## Phase C — Error reporting
+
+Jobs tab এবং Telegram-এর job status-এ conversion বা download ব্যর্থ হলে error code ও পরবর্তী করণীয় দেখাবে। Error code সাধারণ কারণ নির্দেশ করে; platform-এর login/access restriction bypass করা হয় না। Automated tests Python syntax/import, endpoints, shared history, trim parsing, conversion buttons ও website JavaScript পরীক্ষা করে।
+
+
 ## Security
 
 - App publicly reachable, কিন্তু access code ছাড়া API ব্যবহার করা যাবে না।
