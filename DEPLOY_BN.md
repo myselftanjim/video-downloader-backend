@@ -32,6 +32,44 @@
 - একবারে একটি processing job চলবে।
 - সব social URL কাজ করবে না; platform rules, source availability ও login/DRM controls respect করতে হবে। এই টুল কোনো সুরক্ষা পাশ কাটায় না।
 
+
+## Telegram Bot চালু করার ধাপ (Phase A)
+
+Telegram bot চালুর আগে GitHub-এর নতুন version Render-এ deploy হতে হবে। Bot token আমাকে বা অন্য কাউকে chat-এ পাঠাবে না; এটি শুধু Render-এর environment variable-এ রাখবে।
+
+### ধাপ ১ — Bot তৈরি করো
+1. Telegram-এ \`@BotFather\` খোলো।
+2. \`/newbot\` পাঠাও।
+3. Bot-এর display name ও username দাও (username-এর শেষে \`bot\` থাকতে হবে)।
+4. BotFather যে token দেবে, সেটি কপি করে নিরাপদে রাখো। Token public করো না।
+
+### ধাপ ২ — নিজের Telegram user ID বের করো
+1. Telegram-এ \`@userinfobot\` খুলে \`/start\` দাও।
+2. তোমার numeric user ID কপি করো। Bot-টি শুধু এই ID allowlist-এ থাকলে ব্যবহার করা যাবে।
+3. একাধিক trusted user অনুমতি দিতে চাইলে ID-গুলো comma দিয়ে আলাদা করে লিখতে হবে। এখন নিজের ID দিয়েই শুরু করো।
+
+### ধাপ ৩ — Webhook secret তৈরি করো
+একটি লম্বা random secret তৈরি করো যাতে শুধু English letters, numbers, underscore (\`_\`) ও hyphen (\`-\`) থাকে। উদাহরণ হিসেবে token generator-এর output ব্যবহার করতে পারো; এই secret-ও public করো না।
+
+### ধাপ ৪ — Render environment variables যোগ করো
+1. [Render Dashboard](https://dashboard.render.com/) → MediaNest web service → **Environment** খোলো।
+2. নিচের environment variables যোগ করো:
+   - \`TELEGRAM_BOT_TOKEN\` = BotFather-এর token
+   - \`TELEGRAM_ALLOWED_USER_IDS\` = তোমার numeric Telegram user ID
+   - \`TELEGRAM_WEBHOOK_SECRET\` = ধাপ ৩-এর random secret
+   - \`TELEGRAM_WEBHOOK_URL\` = \`https://medianest.reelsbytanjim.com/telegram/webhook\` (custom domain চালু থাকলে); না হলে Render service-এর HTTPS URL-এর শেষে \`/telegram/webhook\` যোগ করো।
+3. **Save, Build & Deploy** করো। এই চারটি variable পূরণ না থাকলে bot ইচ্ছাকৃতভাবে disabled থাকবে।
+
+### ধাপ ৫ — পরীক্ষা করো
+1. Deploy সফল হলে Telegram-এ নিজের bot-এর chat খোলো এবং \`/start\` দাও।
+2. **Video Download** বেছে একটি public video link পাঠাও। Bot-এর দেওয়া quality/format বেছে নাও।
+3. **Image Download** বেছে একটি public post/image link পরীক্ষা করো।
+4. **My Jobs / Status** ও **Cancel Job**-ও পরীক্ষা করো।
+5. 49 MiB-এর চেয়ে বড় output Telegram-এ ফাইল হিসেবে পাঠানো যাবে না; bot ১৫ মিনিট মেয়াদি temporary link দেওয়ার চেষ্টা করবে। Render restart হলে চলমান job বা in-memory link হারিয়ে যেতে পারে।
+
+### কী কী এখনো বাকি
+কোড GitHub-এ push করা থাকলেও live deployment ও Telegram end-to-end test না হওয়া পর্যন্ত bot-কে fully working ধরা যাবে না। Bot private chat এবং allowlisted user ID-তেই কাজ করে; private/login-required content বা platform access control bypass করে না।
+
 ## Security
 
 - App publicly reachable, কিন্তু access code ছাড়া API ব্যবহার করা যাবে না।
