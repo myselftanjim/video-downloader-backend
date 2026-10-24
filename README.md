@@ -44,6 +44,16 @@ On startup, MediaNest calls Telegram's \`setWebhook\` method. In a private chat,
 
 The bot intentionally works only in private chats and only for user IDs in the allowlist. Job state and temporary links are in memory, so a Render restart clears them. Phase A needs a real deployment and live tests before it can be considered operational.
 
+
+## Phase B — Shared Job Management
+
+- The website's **Jobs & History** tab lists recent jobs created from either the website or Telegram, including status, progress, output name, and available download/cancel actions.
+- Telegram's **My Jobs / Status** can also list recent website jobs; an allowlisted private-bot user may cancel a running website job or request a completed output to be sent to Telegram.
+- Multi-image results are packaged as a ZIP; progress updates remain available in both interfaces.
+- Completed output is still temporary. Job history is held in process memory and expires after approximately 30 minutes; a Render restart clears jobs and temporary files. Persistent history/object storage is a later phase.
+- The /api/jobs endpoint exposes only safe job metadata, not filesystem paths, process objects, or internal task handles, and requires the website session.
+
+
 ## Known limitations
 
 - YouTube may reject requests from shared cloud IPs with “Sign in to confirm you're not a bot.” MediaNest now displays a plain-language explanation. It does not bypass bot checks or authentication controls. For videos you own, use YouTube Studio or Google Takeout to download the file, then upload the file into MediaNest for processing.
