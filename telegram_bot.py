@@ -860,6 +860,9 @@ async def _handle_callback(callback: dict) -> None:
     if data == "action:status":
         await _show_status(chat_id, user_id)
         return
+    if data == "action:history":
+        await _show_history(chat_id, user_id)
+        return
     if data == "action:limits":
         await _send_message(chat_id, _limits_text(), _main_menu())
         return
@@ -924,6 +927,7 @@ async def _handle_callback(callback: dict) -> None:
             await _send_message(chat_id, "এই job আর running নেই।", _main_menu())
             return
         await _services["cancel_job"](job_id)
+        _remember_job(user_id, job_id, job)
         monitor = _monitor_tasks.get(job_id)
         if monitor and not monitor.done():
             monitor.cancel()
@@ -958,7 +962,7 @@ async def _handle_message(message: dict) -> None:
     command = text.split()[0].split("@")[0].lower()
     if command in ("/start", "/help"):
         await _send_message(chat_id,
-            "👋 MediaNest Bot-এ স্বাগতম!\n\nVideo বা Image বেছে public link পাঠাও, অথবা Convert a video চেপে নিজের ছোট video file পাঠাও। MP4 quality, MP3, trim, status ও cancel ব্যবহার করা যাবে।\n\n✅ Bot-এর file Telegram attachment হিসেবে এলে chat-এ থাকবে; পরে ওই message থেকে আবার download করতে পারবে। বড় file link হিসেবে এলে সেটি temporary।\nPrivate/login-required content সমর্থিত নয়।",
+            "👋 MediaNest Bot-এ স্বাগতম!\n\nVideo বা Image বেছে public link পাঠাও, অথবা Convert a video চেপে নিজের ছোট video file পাঠাও। MP4 quality, MP3, trim, status, history ও cancel ব্যবহার করা যাবে।\n\n✅ Bot-এর file Telegram attachment হিসেবে এলে chat-এ থাকবে; পরে ওই message থেকে আবার download করতে পারবে। বড় file link হিসেবে এলে সেটি temporary।\nCommands: /history, /status, /limits, /cancel\nPrivate/login-required content সমর্থিত নয়।",
             _main_menu())
         return
     if command == "/video":
@@ -975,6 +979,10 @@ async def _handle_message(message: dict) -> None:
         return
     if command == "/limits":
         await _send_message(chat_id, _limits_text(), _main_menu())
+        return
+    if command == "/history":
+        query = text.partition(" ")[2].strip()
+        await _show_history(chat_id, user_id, query)
         return
     if command == "/status":
         await _show_status(chat_id, user_id)
