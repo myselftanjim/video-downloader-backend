@@ -40,7 +40,7 @@ Configure these variables in Render (never commit the bot token):
 - \`TELEGRAM_WEBHOOK_SECRET\`: random secret containing only letters, numbers, underscores or hyphens.
 - \`TELEGRAM_WEBHOOK_URL\`: public HTTPS URL ending in \`/telegram/webhook\`, for example \`https://medianest.reelsbytanjim.com/telegram/webhook\` if that domain is live.
 
-On startup, MediaNest calls Telegram's \`setWebhook\` method. In a private chat, the allowlisted user can choose Video or Image, paste a public URL, choose an available MP4 quality or MP3, check job status, or cancel their own running job. Completed files up to 49 MiB are sent through Telegram; larger outputs use an expiring temporary download link when a public base URL is available.
+On startup, MediaNest calls Telegram's \`setWebhook\` method. In a private chat, the allowlisted user can choose Video or Image, paste a public URL, choose an available MP4 quality or MP3, check job status, or cancel their own running job. Completed files up to 47 MiB are sent through Telegram; larger outputs use an expiring temporary download link when a public base URL is available.
 
 The bot intentionally works only in private chats and only for user IDs in the allowlist. Job state and temporary links are in memory, so a Render restart clears them. Phase A needs a real deployment and live tests before it can be considered operational.
 
