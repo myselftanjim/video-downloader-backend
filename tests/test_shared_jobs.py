@@ -145,3 +145,90 @@ def test_telegram_converter_trim_buttons_hidden_for_short_video():
     })
     callbacks = [button["callback_data"] for row in keyboard["inline_keyboard"] for button in row]
     assert "trimask:deadbeef" not in callbacks
+
+
+def test_telegram_converter_downloads_and_inspects_a_small_upload(tmp_path, monkeypatch):
+    import telegram_bot
+
+    original_services = telegram_bot._services.copy()
+    original_session_tokens = set(telegram_bot._converter_sessions)
+    messages = []
+    calls = []
+
+    async def fake_api(method, *, data=None, files=None, timeout=20.0):
+        calls.append((method, data))
+        return {"ok": True, "result": {"file_path": "video/source.mp4", "file_size": 14}}
+
+    async def fake_send(chat_id, text, reply_markup=None):
+        messages.append((text, reply_markup))
+        return {"ok": True}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-length": "14"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_bytes(self, chunk_size=65536):
+            yield b"fake-video-data"
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url):
+            assert method == "GET"
+            assert "/file/bot" in url
+            return FakeResponse()
+
+    async def fake_probe(path):
+        raise AssertionError("probe_local_video must run in a worker thread")
+
+    def probe_video(path):
+        assert path.is_file()
+        assert path.read_bytes() == b"fake-video-data"
+        return {"duration": 1200, "height": 720, "qualities": [720, 360], "has_audio": True}
+
+    monkeypatch.setattr(telegram_bot, "_api", fake_api)
+    monkeypatch.setattr(telegram_bot, "_send_message", fake_send)
+    monkeypatch.setattr(telegram_bot.httpx, "AsyncClient", FakeClient)
+    telegram_bot.configure_telegram({
+        "jobs": {},
+        "uploads": {},
+        "TEMP_ROOT": tmp_path,
+        "probe_local_video": probe_video,
+        "duration_text": lambda value: "20:00",
+    })
+
+    try:
+        media = {"file_id": "file-id", "file_size": 14, "file_name": "source.mp4"}
+        asyncio.run(telegram_bot._receive_telegram_video(
+            123, "456", {"video": media}, media
+        ))
+        assert calls[0][0] == "getFile"
+        assert calls[0][1]["file_id"] == "file-id"
+        assert len(telegram_bot._services["uploads"]) == 1
+        assert messages
+        keyboard = messages[-1][1]
+        callbacks = [
+            button["callback_data"]
+            for row in keyboard["inline_keyboard"]
+            for button in row
+        ]
+        assert any(callback.startswith("convert:") and ":mp4:" in callback for callback in callbacks)
+        assert any(callback.startswith("convert:") and ":mp3:" in callback for callback in callbacks)
+        assert any(callback.startswith("trimask:") for callback in callbacks)
+    finally:
+        telegram_bot.configure_telegram(original_services)
+        for token in set(telegram_bot._converter_sessions) - original_session_tokens:
+            telegram_bot._converter_sessions.pop(token, None)
