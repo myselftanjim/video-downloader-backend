@@ -145,7 +145,7 @@ async def _show_status(chat_id, user_id: str) -> None:
         await _send_message(chat_id, "তোমার কোনো Telegram job পাওয়া যায়নি। নিচের menu থেকে নতুন কাজ শুরু করো।",
                             _main_menu())
         return
-    lines = ["📊 *MediaNest job status*"]
+    lines = ["📊 MediaNest job status"]
     rows = []
     for job_id, job in found:
         status = str(job.get("status", "unknown")).upper()
@@ -243,7 +243,7 @@ async def _process_url(chat_id, user_id: str, raw_url: str, mode: str) -> None:
         source = info.get("source") or "Media source"
         await _send_message(
             chat_id,
-            f"🎬 *ভিডিও পাওয়া গেছে*\n{title}\nSource: {source}\nDuration: {duration}\n\nMP4 quality অথবা MP3 বেছে নাও।",
+            f"🎬 ভিডিও পাওয়া গেছে\n{title}\nSource: {source}\nDuration: {duration}\n\nMP4 quality অথবা MP3 বেছে নাও।",
             {"inline_keyboard": rows},
         )
     except HTTPException as exc:
@@ -556,7 +556,6 @@ async def telegram_download(download_token: str):
             raise HTTPException(status_code=404, detail="The temporary file is not available.")
     except OSError:
         raise HTTPException(status_code=404, detail="The temporary file is not available.")
-    _mark_download_link_used(download_token)
     return FileResponse(
         resolved, filename=job.get("filename") or resolved.name,
         media_type="application/octet-stream",
