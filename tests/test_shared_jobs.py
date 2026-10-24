@@ -53,3 +53,55 @@ def test_shared_job_list_returns_website_and_telegram_jobs_without_internal_fiel
     finally:
         app.jobs.clear()
         app.jobs.update(original)
+
+
+def test_job_error_classifier_returns_actionable_codes():
+    assert app.classify_job_error({
+        "status": "failed",
+        "message": "Processing reached the 15-minute limit",
+    })["error_code"] == "PROCESSING_TIMEOUT"
+    restricted = app.classify_job_error({
+        "status": "failed",
+        "message": "YouTube bot verification was blocked",
+    })
+    assert restricted["error_code"] == "SOURCE_ACCESS_RESTRICTED"
+    assert restricted["recovery_hint"]
+    assert app.classify_job_error({
+        "status": "failed",
+        "message": "The output exceeded the 400 MB size limit",
+    })["error_code"] == "FILE_SIZE_LIMIT"
+    assert app.classify_job_error({
+        "status": "completed",
+        "message": "All done",
+    }) is None
+
+
+def test_telegram_trim_range_validation():
+    from telegram_bot import _parse_trim_range
+
+    assert _parse_trim_range("15,45", 900) == (15.0, 45.0)
+    assert _parse_trim_range("15 - 45", 900) == (15.0, 45.0)
+    assert _parse_trim_range("45,15", 900) is None
+    assert _parse_trim_range("15,901", 900) is None
+    assert _parse_trim_range("not-a-range", 900) is None
+    assert _parse_trim_range("15,45", 599) is None
+
+
+def test_telegram_conversion_keyboard_offers_mp4_mp3_and_trim_when_available():
+    from telegram_bot import _conversion_keyboard
+
+    keyboard = _conversion_keyboard("abcd1234", {
+        "qualities": [720, 360],
+        "has_audio": True,
+        "duration": 1200,
+    })
+    callbacks = [
+        button["callback_data"]
+        for row in keyboard["inline_keyboard"]
+        for button in row
+    ]
+    assert "convert:abcd1234:mp4:best" in callbacks
+    assert "convert:abcd1234:mp4:720" in callbacks
+    assert "convert:abcd1234:mp3:best" in callbacks
+    assert "trimask:abcd1234" in callbacks
+    assert all(len(callback) <= 64 for callback in callbacks)
