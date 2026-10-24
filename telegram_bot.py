@@ -27,6 +27,9 @@ TELEGRAM_API_BASE_URL = (
     os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip().rstrip("/")
     or "https://api.telegram.org"
 )
+# Optional shared mount for Local Bot API --local file paths. Only set this when
+# MediaNest and the Local Bot API server can read the same storage volume.
+TELEGRAM_LOCAL_FILE_ROOT = os.getenv("TELEGRAM_LOCAL_FILE_ROOT", "").strip()
 ALLOWED_USER_IDS = {
     item.strip() for item in os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
     if item.strip().isdigit()
@@ -56,8 +59,8 @@ def _telegram_file_limits(api_base_url: str, upload_mb=None, download_mb=None) -
 
     if local_api:
         return (
-            parse_mb(upload_mb, 400, 1900),
-            parse_mb(download_mb, 400, 1900),
+            parse_mb(upload_mb, 400, 2000),
+            parse_mb(download_mb, 400, 2000),
         )
     return (
         parse_mb(upload_mb, 47, 47),
@@ -722,24 +725,49 @@ async def _receive_telegram_video(chat_id, user_id: str, message: dict, media: d
             size = declared_size
         if size > TELEGRAM_DOWNLOAD_LIMIT:
             raise RuntimeError(f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB.")
-        download_url = f"{TELEGRAM_API_BASE_URL}/file/bot{BOT_TOKEN}/{file_path}"
+        file_path_obj = Path(str(file_path))
         total = 0
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False) as client:
-            async with client.stream("GET", download_url) as response:
-                if response.status_code != 200:
-                    raise RuntimeError("Telegram file download failed.")
-                content_length = response.headers.get("content-length")
-                try:
-                    if content_length and int(content_length) > TELEGRAM_DOWNLOAD_LIMIT:
-                        raise RuntimeError("Telegram Bot API download limit is 20 MB.")
-                except ValueError:
-                    pass
-                with target.open("wb") as output:
-                    async for chunk in response.aiter_bytes(64 * 1024):
-                        total += len(chunk)
-                        if total > TELEGRAM_DOWNLOAD_LIMIT:
-                            raise RuntimeError("Telegram Bot API download limit is 20 MB.")
-                        output.write(chunk)
+        if file_path_obj.is_absolute():
+            # Local Bot API in --local mode returns a path on its own disk.
+            # It can only be copied by this process when both services share a volume.
+            if not TELEGRAM_LOCAL_FILE_ROOT:
+                raise RuntimeError(
+                    "Local Bot API returned a server-local file path. Large incoming-file conversion "
+                    "needs the same Bot API data volume mounted and TELEGRAM_LOCAL_FILE_ROOT set."
+                )
+            shared_root = Path(TELEGRAM_LOCAL_FILE_ROOT).resolve()
+            shared_path = file_path_obj.resolve()
+            if not shared_path.is_relative_to(shared_root) or not shared_path.is_file():
+                raise RuntimeError(
+                    "Local Bot API file is not visible under TELEGRAM_LOCAL_FILE_ROOT. "
+                    "Check that the same data volume is mounted at the same path."
+                )
+            size_on_disk = shared_path.stat().st_size
+            if size_on_disk > TELEGRAM_DOWNLOAD_LIMIT:
+                raise RuntimeError(
+                    f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB."
+                )
+            import shutil
+            await asyncio.to_thread(shutil.copyfile, shared_path, target)
+            total = size_on_disk
+        else:
+            download_url = f"{TELEGRAM_API_BASE_URL}/file/bot{BOT_TOKEN}/{file_path}"
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False) as client:
+                async with client.stream("GET", download_url) as response:
+                    if response.status_code != 200:
+                        raise RuntimeError("Telegram file download failed.")
+                    content_length = response.headers.get("content-length")
+                    try:
+                        if content_length and int(content_length) > TELEGRAM_DOWNLOAD_LIMIT:
+                            raise RuntimeError(f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB.")
+                    except ValueError:
+                        pass
+                    with target.open("wb") as output:
+                        async for chunk in response.aiter_bytes(64 * 1024):
+                            total += len(chunk)
+                            if total > TELEGRAM_DOWNLOAD_LIMIT:
+                                raise RuntimeError(f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB.")
+                            output.write(chunk)
         if not total:
             raise RuntimeError("Empty video file.")
         details = await asyncio.to_thread(services["probe_local_video"], target)
