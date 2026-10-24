@@ -23,15 +23,53 @@ from starlette.background import BackgroundTask
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
 WEBHOOK_URL = os.getenv("TELEGRAM_WEBHOOK_URL", "").strip()
+TELEGRAM_API_BASE_URL = (
+    os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip().rstrip("/")
+    or "https://api.telegram.org"
+)
 ALLOWED_USER_IDS = {
     item.strip() for item in os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
     if item.strip().isdigit()
 }
-TELEGRAM_UPLOAD_LIMIT = 47 * 1024 * 1024
-TELEGRAM_DOWNLOAD_LIMIT = 20_000_000
 TELEGRAM_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v', '.mpeg', '.mpg', '.3gp'}
 LINK_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 15 * 60
+
+
+def _telegram_file_limits(api_base_url: str, upload_mb=None, download_mb=None) -> tuple[int, int]:
+    """Return safe upload/download byte caps for the selected Bot API endpoint.
+
+    Telegram's hosted API is capped at 50 MB uploads and 20 MB downloads.
+    A self-hosted Local Bot API can support much larger files; we retain a margin
+    below its documented 2000 MB upload ceiling and default to MediaNest's 400 MB
+    processing cap to avoid accepting files the app cannot reasonably process.
+    """
+    hostname = (urlsplit(api_base_url).hostname or "").lower()
+    local_api = hostname not in ("", "api.telegram.org")
+
+    def parse_mb(raw, default, ceiling):
+        try:
+            value = int(str(raw).strip()) if raw is not None and str(raw).strip() else default
+        except (TypeError, ValueError):
+            value = default
+        return max(1, min(ceiling, value)) * 1024 * 1024
+
+    if local_api:
+        return (
+            parse_mb(upload_mb, 400, 1900),
+            parse_mb(download_mb, 400, 1900),
+        )
+    return (
+        parse_mb(upload_mb, 47, 47),
+        parse_mb(download_mb, 20, 20),
+    )
+
+
+TELEGRAM_UPLOAD_LIMIT, TELEGRAM_DOWNLOAD_LIMIT = _telegram_file_limits(
+    TELEGRAM_API_BASE_URL,
+    os.getenv("TELEGRAM_UPLOAD_LIMIT_MB"),
+    os.getenv("TELEGRAM_DOWNLOAD_LIMIT_MB"),
+)
 
 router = APIRouter()
 _services: dict = {}
@@ -77,7 +115,7 @@ def _base_url() -> str:
 async def _api(method: str, *, data=None, files=None, timeout=20.0) -> dict:
     if not BOT_TOKEN:
         return {"ok": False, "description": "Telegram bot is not configured"}
-    endpoint = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    endpoint = f"{TELEGRAM_API_BASE_URL}/bot{BOT_TOKEN}/{method}"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
             response = await client.post(endpoint, data=data, files=files)
@@ -406,10 +444,13 @@ async def _monitor_job(chat_id, user_id: str, job_id: str, message_id) -> None:
 
 async def _send_document(chat_id, file_path: Path, filename: str) -> dict:
     try:
+        size = file_path.stat().st_size
+        # A little more transfer time for larger files, while keeping a hard ceiling.
+        timeout = min(3600.0, max(180.0, 120.0 + (size / (1024 * 1024)) * 2.0))
         with file_path.open("rb") as handle:
             return await _api("sendDocument", data={"chat_id": str(chat_id), "caption": "MediaNest download complete"},
                               files={"document": (Path(filename).name, handle, "application/octet-stream")},
-                              timeout=180.0)
+                              timeout=timeout)
     except OSError:
         return {"ok": False, "description": "Could not read generated file"}
 
@@ -537,7 +578,7 @@ async def _receive_telegram_video(chat_id, user_id: str, message: dict, media: d
             size = declared_size
         if size > TELEGRAM_DOWNLOAD_LIMIT:
             raise RuntimeError("Telegram Bot API download limit is 20 MB.")
-        download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        download_url = f"{TELEGRAM_API_BASE_URL}/file/bot{BOT_TOKEN}/{file_path}"
         total = 0
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=False) as client:
             async with client.stream("GET", download_url) as response:
@@ -682,7 +723,7 @@ async def _handle_callback(callback: dict) -> None:
         _user_modes[user_id] = mode
         if mode == "convert":
             _pending_urls.pop(user_id, None)
-            await _send_message(chat_id, "🎞 Convert করতে MP4/MOV/MKV/WebM ভিডিও file পাঠাও। Telegram Bot API-তে upload থেকে download limit 20 MB।", _main_menu())
+            await _send_message(chat_id, f"🎞 Convert করতে MP4/MOV/MKV/WebM ভিডিও file পাঠাও। Telegram Bot API download limit {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB।", _main_menu())
             return
         pending = _pending_urls.pop(user_id, None)
         if pending and mode in ("video", "image"):
@@ -780,7 +821,7 @@ async def _handle_message(message: dict) -> None:
         return
     if command == "/convert":
         _user_modes[user_id] = "convert"
-        await _send_message(chat_id, "🎞 Convert করতে MP4/MOV/MKV/WebM ভিডিও file পাঠাও (সর্বোচ্চ 20 MB)।", _main_menu())
+        await _send_message(chat_id, f"🎞 Convert করতে MP4/MOV/MKV/WebM ভিডিও file পাঠাও (সর্বোচ্চ {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB)।", _main_menu())
         return
     if command == "/status":
         await _show_status(chat_id, user_id)
