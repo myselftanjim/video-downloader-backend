@@ -43,9 +43,8 @@ def _telegram_file_limits(api_base_url: str, upload_mb=None, download_mb=None) -
     """Return safe upload/download byte caps for the selected Bot API endpoint.
 
     Telegram's hosted API is capped at 50 MB uploads and 20 MB downloads.
-    A self-hosted Local Bot API can support much larger files; we retain a margin
-    below its documented 2000 MB upload ceiling and default to MediaNest's 400 MB
-    processing cap to avoid accepting files the app cannot reasonably process.
+    A self-hosted Local Bot API can support uploads up to 2000 MB. MediaNest defaults
+    to 400 MB and permits explicit limits up to Telegram's documented 2000 MB ceiling.
     """
     hostname = (urlsplit(api_base_url).hostname or "").lower()
     local_api = hostname not in ("", "api.telegram.org")
@@ -174,13 +173,20 @@ def _main_menu() -> dict:
 def _limits_text() -> str:
     incoming_mb = TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024)
     outgoing_mb = TELEGRAM_UPLOAD_LIMIT / (1024 * 1024)
+    local_api = (urlsplit(TELEGRAM_API_BASE_URL).hostname or "").lower() not in ("", "api.telegram.org")
+    incoming_note = (
+        "\n⚠️ Local Bot API-তে incoming file বড় হলে একই data volume MediaNest-এ mount করে "
+        "TELEGRAM_LOCAL_FILE_ROOT configure করতে হবে।"
+        if local_api else
+        "\nবড় incoming video Telegram থেকে আনা না গেলে website Converter ব্যবহার করো।"
+    )
     return (
         "📦 MediaNest File Limits\n"
         f"Incoming video for Convert: up to {incoming_mb:.0f} MB\n"
         f"File sent directly to this chat: up to {outgoing_mb:.0f} MB\n\n"
         "✅ Direct Telegram attachment chat-এ থাকবে; পরে একই message থেকে আবার download করতে পারবে।\n"
-        "🔗 Limit-এর চেয়ে বড় output হলে temporary link দেওয়া হবে, যা ১৫ মিনিট থাকবে।\n"
-        "বড় incoming video Telegram থেকে আনা না গেলে website Converter ব্যবহার করো।"
+        "🔗 Limit-এর চেয়ে বড় output হলে temporary link দেওয়া হবে, যা ১৫ মিনিট থাকবে।"
+        + incoming_note
     )
 
 
@@ -799,11 +805,17 @@ async def _receive_telegram_video(chat_id, user_id: str, message: dict, media: d
         import shutil
         shutil.rmtree(directory, ignore_errors=True)
         print(f"[telegram-converter] upload failed user={user_id} error={type(exc).__name__}")
-        detail = (
-            f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB."
-            if "download limit is" in str(exc)
-            else "এই ফাইলটি supported video হিসেবে পড়া যায়নি। MP4/MOV/MKV/WebM file দিয়ে চেষ্টা করো।"
-        )
+        error_text = str(exc)
+        if "download limit is" in error_text:
+            detail = f"Telegram Bot API download limit is {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB."
+        elif "server-local file path" in error_text or "TELEGRAM_LOCAL_FILE_ROOT" in error_text:
+            detail = (
+                "Local Bot API server-এর file storage এই app-এ share করা নেই। "
+                "সাধারণ incoming Converter upload-এর জন্য website ব্যবহার করো; "
+                "বড় incoming file চাইলে shared volume mount ও TELEGRAM_LOCAL_FILE_ROOT configure করতে হবে।"
+            )
+        else:
+            detail = "এই ফাইলটি supported video হিসেবে পড়া যায়নি। MP4/MOV/MKV/WebM file দিয়ে চেষ্টা করো।"
         await _send_message(chat_id, "❌ " + detail, _main_menu())
 
 
