@@ -59,7 +59,7 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
    - \`TELEGRAM_WEBHOOK_SECRET\` = ধাপ ৩-এর random secret
    - \`TELEGRAM_WEBHOOK_URL\` = \`https://medianest.reelsbytanjim.com/telegram/webhook\` (custom domain চালু থাকলে); না হলে Render service-এর HTTPS URL-এর শেষে \`/telegram/webhook\` যোগ করো।
    - TELEGRAM_API_BASE_URL সাধারণত সেট করার দরকার নেই; default https://api.telegram.org। Self-hosted Local Bot API deploy করলে তবেই custom URL দেবে.
-   - TELEGRAM_UPLOAD_LIMIT_MB ও TELEGRAM_DOWNLOAD_LIMIT_MB optional। Hosted API হলে code নিরাপদে 47 MB upload ও 20 MB download cap enforce করে; Local Bot API হলে default 400 MB এবং config অনুযায়ী সর্বোচ্চ 1900 MB পর্যন্ত যেতে পারে.
+   - TELEGRAM_UPLOAD_LIMIT_MB ও TELEGRAM_DOWNLOAD_LIMIT_MB optional। Hosted API হলে code নিরাপদে 47 MB upload ও 20 MB download cap enforce করে; Local Bot API হলে default 400 MB এবং config অনুযায়ী সর্বোচ্চ 2000 MB পর্যন্ত যেতে পারে.
 3. **Save, Build & Deploy** করো। এই চারটি variable পূরণ না থাকলে bot ইচ্ছাকৃতভাবে disabled থাকবে।
 
 ### ধাপ ৫ — পরীক্ষা করো
