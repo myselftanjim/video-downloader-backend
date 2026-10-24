@@ -67,7 +67,7 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 2. **Video Download** বেছে একটি public video link পাঠাও। Bot-এর দেওয়া quality/format বেছে নাও।
 3. **Image Download** বেছে একটি public post/image link পরীক্ষা করো।
 4. **My Jobs / Status** ও **Cancel Job**-ও পরীক্ষা করো।
-5. Hosted Bot API-তে 47 MiB-এর চেয়ে বড় output attachment হিসেবে পাঠানো যাবে না; bot ১৫ মিনিট মেয়াদি temporary link দেবে। Optional Local Bot API setup করলে configured limit পর্যন্ত বড় file chat-এ পাঠানো সম্ভব। Render restart হলে চলমান job বা in-memory link হারিয়ে যেতে পারে।
+5. Hosted Bot API-তে 47 MiB-এর চেয়ে বড় output attachment হিসেবে পাঠানো যাবে না; bot ১৫ মিনিটের temporary link দেবে। Optional Local Bot API setup করলে outgoing file size বাড়ানো যায়। Render restart হলে চলমান job বা in-memory history হারিয়ে যেতে পারে।
 
 ### কী কী এখনো বাকি
 কোড GitHub-এ push করা থাকলেও live deployment ও Telegram end-to-end test না হওয়া পর্যন্ত bot-কে fully working ধরা যাবে না। Bot private chat এবং allowlisted user ID-তেই কাজ করে; private/login-required content বা platform access control bypass করে না।
@@ -91,7 +91,7 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 4. ১০ মিনিট বা তার বেশি duration হলে **Trim then convert** চাপতে পারবে। এরপর start,end seconds পাঠাও; যেমন \`15,45\`।
 5. Output format ও quality বেছে নাও। Bot progress দেখাবে এবং কাজ শেষে file পাঠানোর চেষ্টা করবে; বড় output হলে temporary link দিতে পারে।
 
-**Telegram file limit:** সাধারণ hosted Bot API দিয়ে bot সর্বোচ্চ ২০ MB পর্যন্ত incoming file download করতে পারে। এর বেশি হলে website-এর Converter ব্যবহার করো; website upload limit বর্তমানে ৯০ MB। Telegram file limits: https://core.telegram.org/bots/faq
+**Telegram file limit:** সাধারণ hosted Bot API দিয়ে bot ২০ MB পর্যন্ত incoming file download করতে পারে এবং প্রায় ৫০ MB পর্যন্ত output upload করতে পারে। এর বেশি outgoing file chat-এ পাঠাতে Local Bot API setup দেখো; incoming বড় file conversion-এর জন্য shared storage-ও প্রয়োজন হতে পারে।
 
 ## Optional — বড় ফাইল Telegram chat-এ পাঠানো
 
@@ -103,7 +103,16 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 4. প্রয়োজনে TELEGRAM_UPLOAD_LIMIT_MB এবং TELEGRAM_DOWNLOAD_LIMIT_MB দাও। Default 400 MB; app-ও default-এ 400 MB processing limit-এ আছে.
 5. Redeploy করে 20 MB-এর বেশি incoming file এবং 47 MB-এর বেশি outgoing result বাস্তব bot-এ পরীক্ষা করো.
 
-Local Bot API-তে Telegram সর্বোচ্চ 2000 MB upload support করে; MediaNest code safety margin হিসেবে 1900 MB hard cap রাখে। Render Free-তে CPU/RAM/time সীমার কারণে বড় ভিডিও processing সফল হবে—এমন নিশ্চয়তা নেই.
+Local Bot API-তে Telegram সর্বোচ্চ 2000 MB পর্যন্ত file upload support করে; MediaNest-এর default cap 400 MB এবং service-এর CPU/RAM/time সীমাও আছে। Incoming বড় file convert করতে Telegram Local Bot API-এর persistent data volume একই path-এ MediaNest app-এ mount করে TELEGRAM_LOCAL_FILE_ROOT সেট করতে হবে। আলাদা VPS ও Render service-এর filesystem নিজে থেকে shared হয় না। বিস্তারিত: deploy/local-bot-api/README.md
+
+## Telegram Bot-এর নতুন commands
+
+- `/history` — সাম্প্রতিক job-গুলোর তালিকা দেখাবে। Search করতে `/history beach` বা filename/title-এর অংশ লিখতে পারো।
+- `/status` — চলমান/সাম্প্রতিক job-এর status ও progress দেখাবে।
+- `/limits` — Telegram-এর বর্তমান input/output limit ও attachment/temporary link ব্যাখ্যা করবে।
+- `/cancel` — চলমান job বাতিল করার option দেবে।
+- Bot-এর main menu থেকে **Job History** চাপলেও history খোলে। Server file এখনও থাকলে history থেকে Telegram-এ আবার পাঠানো যায়; file আগে attachment হিসেবে পাঠানো হলে original message-টি chat-এ থাকবে।
+- History-তে সর্বশেষ ২৫টি in-memory record রাখা হয়; Render restart/redeploy হলে history metadata reset হয়। Permanent archive-এর জন্য database/object storage প্রয়োজন।
 
 ## Phase C — Error reporting
 
