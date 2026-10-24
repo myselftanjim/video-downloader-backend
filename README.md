@@ -29,6 +29,21 @@ Optional:
 
 Never commit environment secrets to GitHub.
 
+
+## Telegram Bot (Phase A)
+
+The Telegram bot shares the existing FastAPI process and MediaNest job engine; no separate worker service is required. It uses a Telegram webhook and is disabled by default until all required environment variables are present.
+
+Configure these variables in Render (never commit the bot token):
+- \`TELEGRAM_BOT_TOKEN\`: token created by \`@BotFather\`.
+- \`TELEGRAM_ALLOWED_USER_IDS\`: comma-separated numeric Telegram user IDs allowed to use the bot. Keep this list private and small.
+- \`TELEGRAM_WEBHOOK_SECRET\`: random secret containing only letters, numbers, underscores or hyphens.
+- \`TELEGRAM_WEBHOOK_URL\`: public HTTPS URL ending in \`/telegram/webhook\`, for example \`https://medianest.reelsbytanjim.com/telegram/webhook\` if that domain is live.
+
+On startup, MediaNest calls Telegram's \`setWebhook\` method. In a private chat, the allowlisted user can choose Video or Image, paste a public URL, choose an available MP4 quality or MP3, check job status, or cancel their own running job. Completed files up to 49 MiB are sent through Telegram; larger outputs use an expiring temporary download link when a public base URL is available.
+
+The bot intentionally works only in private chats and only for user IDs in the allowlist. Job state and temporary links are in memory, so a Render restart clears them. Phase A needs a real deployment and live tests before it can be considered operational.
+
 ## Known limitations
 
 - YouTube may reject requests from shared cloud IPs with “Sign in to confirm you're not a bot.” MediaNest now displays a plain-language explanation. It does not bypass bot checks or authentication controls. For videos you own, use YouTube Studio or Google Takeout to download the file, then upload the file into MediaNest for processing.
