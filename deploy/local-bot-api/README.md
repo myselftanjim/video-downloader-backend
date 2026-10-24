@@ -51,7 +51,7 @@ After the Local Bot API service is reachable through a protected HTTPS endpoint,
 - `TELEGRAM_DOWNLOAD_LIMIT_MB`: for example `400` initially.
 - `TELEGRAM_LOCAL_FILE_ROOT`: only if MediaNest and the Local Bot API share the same persistent volume mounted at the same absolute path. This is required for large incoming Converter uploads; leave unset when no shared mount exists.
 
-A safe migration order is: deploy and test the API server; make sure the public endpoint has TLS/network protection; configure the MediaNest endpoint; then call the hosted Bot API `logOut` using your secret bot token and redeploy the app so startup can register the webhook against the local endpoint. Avoid posting token-bearing URLs in chats, screenshots, source files, or logs. Once migrated, test `/start`, a small download, a result larger than 47 MiB, and webhook delivery before relying on it.
+A safe migration order is: deploy and test the Local Bot API server; make sure the endpoint has TLS/network protection; while the MediaNest app is still using the hosted API, call `logOut` on `https://api.telegram.org` once using your secret bot token; then immediately set `TELEGRAM_API_BASE_URL` in Render and deploy. On startup, MediaNest will register its webhook against the Local Bot API. Do not set the custom base URL first, because saving Render environment variables may deploy/restart the app before the logout step. Avoid posting token-bearing URLs in chats, screenshots, source files, or logs. Once migrated, test `/start`, a small download, a result larger than 47 MiB, and webhook delivery before relying on it.
 
 ## What works without a shared volume?
 
