@@ -87,6 +87,15 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .nav-button:hover{color:var(--text);background:rgba(255,255,255,.04)}
 .nav-button.active{background:var(--brand-gradient);border-color:rgba(255,255,255,.12);color:#fff;box-shadow:0 6px 18px #684BCB26}
 .tool-view{min-width:0}
+.history-list{display:grid;gap:12px;margin-top:16px}
+.history-card{border:1px solid var(--line);border-radius:15px;background:rgba(14,16,24,.78);padding:15px}
+.history-title{font-weight:700;overflow-wrap:anywhere;margin:0 0 7px}
+.history-meta{display:flex;gap:7px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12px}
+.history-message{font-size:13px;color:var(--muted);margin-top:8px;overflow-wrap:anywhere}
+.history-progress{height:5px;overflow:hidden;background:rgba(255,255,255,.09);border-radius:99px;margin-top:10px}
+.history-progress span{display:block;height:100%;background:var(--action-gradient);width:0;transition:width .25s}
+.history-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.history-actions .btn{width:auto;padding:8px 12px;font-size:12px}
 .converter-intro{display:flex;align-items:center;gap:15px;margin:4px 0 22px}
 .converter-intro h2{font-size:clamp(24px,4vw,32px);letter-spacing:-.045em;margin:5px 0 7px}
 .converter-intro p{max-width:570px;color:var(--muted);font-size:14px;margin:0}
@@ -149,6 +158,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
     <button id="downloaderTab" class="nav-button active" type="button" role="tab" aria-selected="true">Downloader</button>
     <button id="imagesTab" class="nav-button" type="button" role="tab" aria-selected="false">Images <span aria-hidden="true">▧</span></button>
     <button id="converterTab" class="nav-button" type="button" role="tab" aria-selected="false">Converter <span aria-hidden="true">↗</span></button>
+    <button id="jobsTab" class="nav-button" type="button" role="tab" aria-selected="false">Jobs <span aria-hidden="true">☷</span></button>
   </div>
   <div id="downloaderView" class="tool-view" role="tabpanel" aria-labelledby="downloaderTab">
   <form id="infoForm">
@@ -191,6 +201,20 @@ button:disabled{opacity:.45;cursor:not-allowed}
         <p class="small">The temporary server copy is removed after download or within 30 minutes.</p>
       </div>
     </div>
+  </div>
+  <div id="jobsView" class="tool-view hidden" role="tabpanel" aria-labelledby="jobsTab">
+    <section class="converter-intro">
+      <div class="converter-mark" aria-hidden="true">☷</div>
+      <div>
+        <div class="eyebrow">Shared activity</div>
+        <h2>Jobs &amp; History</h2>
+        <p>Website and Telegram jobs appear here together. Running jobs can be cancelled, and completed files can be downloaded while the temporary copy remains available.</p>
+      </div>
+    </section>
+    <div class="rowlabel" style="margin-bottom:8px"><span class="small" id="jobsSummary">Recent activity · temporary history</span><button id="refreshJobsBtn" class="btn secondary" type="button" style="width:auto;padding:8px 12px;font-size:12px">Refresh</button></div>
+    <div id="jobsMessage" class="small" role="status" aria-live="polite"></div>
+    <div id="jobsList" class="history-list"><div class="hint">Open this tab to load recent jobs.</div></div>
+    <p class="hint" style="margin-top:14px">Job history stays in the running server memory and expires after about 30 minutes. A server restart clears the list and temporary files.</p>
   </div>
   <div id="converterView" class="tool-view hidden" role="tabpanel" aria-labelledby="converterTab">
     <section class="converter-intro">
