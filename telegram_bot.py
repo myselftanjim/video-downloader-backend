@@ -767,7 +767,7 @@ async def _handle_message(message: dict) -> None:
     command = text.split()[0].split("@")[0].lower()
     if command in ("/start", "/help"):
         await _send_message(chat_id,
-            "👋 MediaNest Bot-এ স্বাগতম!\n\nVideo বা Image বেছে নাও, তারপর public link পাঠাও। MP4 quality নির্বাচন, MP3, status ও cancel করা যাবে।\nPrivate/login-required content সমর্থিত নয়।",
+            "👋 MediaNest Bot-এ স্বাগতম!\n\nVideo বা Image বেছে public link পাঠাও, অথবা Convert a video চেপে নিজের ছোট video file পাঠাও। MP4 quality, MP3, trim, status ও cancel ব্যবহার করা যাবে।\nPrivate/login-required content সমর্থিত নয়।",
             _main_menu())
         return
     if command == "/video":
