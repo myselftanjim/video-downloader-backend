@@ -105,3 +105,43 @@ def test_telegram_conversion_keyboard_offers_mp4_mp3_and_trim_when_available():
     assert "convert:abcd1234:mp3:best" in callbacks
     assert "trimask:abcd1234" in callbacks
     assert all(len(callback) <= 64 for callback in callbacks)
+
+
+def test_telegram_converter_rejects_files_over_hosted_bot_api_limit(tmp_path, monkeypatch):
+    import telegram_bot
+
+    messages = []
+
+    async def fake_send(chat_id, text, reply_markup=None):
+        messages.append(text)
+        return {"ok": True}
+
+    monkeypatch.setattr(telegram_bot, "_send_message", fake_send)
+    telegram_bot.configure_telegram({
+        "jobs": {},
+        "uploads": {},
+        "TEMP_ROOT": tmp_path,
+    })
+    asyncio.run(telegram_bot._receive_telegram_video(
+        123,
+        "456",
+        {"video": {"file_id": "file-id", "file_size": telegram_bot.TELEGRAM_DOWNLOAD_LIMIT + 1,
+                   "file_name": "large.mp4"}},
+        {"file_id": "file-id", "file_size": telegram_bot.TELEGRAM_DOWNLOAD_LIMIT + 1,
+         "file_name": "large.mp4"},
+    ))
+    assert messages
+    assert "20 MB" in messages[0]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_telegram_converter_trim_buttons_hidden_for_short_video():
+    from telegram_bot import _conversion_keyboard
+
+    keyboard = _conversion_keyboard("deadbeef", {
+        "qualities": [360],
+        "has_audio": True,
+        "duration": 300,
+    })
+    callbacks = [button["callback_data"] for row in keyboard["inline_keyboard"] for button in row]
+    assert "trimask:deadbeef" not in callbacks
