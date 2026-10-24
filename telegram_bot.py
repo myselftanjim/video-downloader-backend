@@ -248,7 +248,7 @@ def _remember_job(user_id: str, job_id: str, job: dict, delivery: str | None = N
                 safe_path = str(candidate)
         except (OSError, KeyError, ValueError):
             safe_path = None
-    if current_delivery == "sent_to_chat":
+    if current_delivery == "sent_to_chat" and job.get("interface") != "website":
         safe_path = None
 
     snapshot = {
@@ -315,6 +315,9 @@ def _history_view(user_id: str, query: str = "") -> tuple[str, dict]:
                 lines.append(f"  পরামর্শ: {str(item['recovery_hint'])[:180]}")
         if item.get("delivery") == "sent_to_chat":
             lines.append("  ✅ ফাইল Telegram chat-এ পাঠানো হয়েছিল; মূল attachment message থেকে আবার নামাও।")
+            if _history_file_available(item) and status == "COMPLETED":
+                rows.append([{"text": f"📤 আবার Telegram-এ পাঠাও · {job_id[:6]}",
+                              "callback_data": f"send:{job_id}"}])
         elif _history_file_available(item) and status == "COMPLETED":
             rows.append([{"text": f"📤 আবার Telegram-এ পাঠাও · {job_id[:6]}",
                           "callback_data": f"send:{job_id}"}])
@@ -554,7 +557,7 @@ async def _monitor_job(chat_id, user_id: str, job_id: str, message_id) -> None:
                                 _remember_job(user_id, job_id, job, delivery="temporary_link")
                                 await _send_message(
                                     chat_id,
-                                    f"✅ ফাইল প্রস্তুত ({size / (1024 * 1024):.1f} MB)। Telegram-এর direct attachment limit-এর কারণে temporary link দিলাম; link ১৫ মিনিট থাকবে, সর্বোচ্চ ৩ বার ব্যবহার করা যাবে।\n{link}",
+                                    f"✅ ফাইল প্রস্তুত ({size / (1024 * 1024):.1f} MB)। Telegram attachment পাঠানো যায়নি বা file size limit ছাড়িয়েছে, তাই temporary link দিলাম; link ১৫ মিনিট থাকবে, সর্বোচ্চ ৩ বার ব্যবহার করা যাবে।\n{link}",
                                     _main_menu(),
                                 )
                                 return
