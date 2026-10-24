@@ -1607,7 +1607,8 @@ async def convert_uploaded(body: ConvertBody):
     jobs[job_id] = {"id": job_id, "status": "running", "progress": 0, "message": "Conversion শুরু হচ্ছে…",
                     "created_at": time.time(), "output_file": None,
                     "title": source_title, "filename": safe_download_filename(requested_name, body.output_format),
-                    "upload_id": body.media_id}
+                    "upload_id": body.media_id, "interface": "website", "kind": "conversion",
+                    "format": body.output_format}
     jobs[job_id]["task"] = asyncio.create_task(
         process_local_conversion(job_id, body.media_id, body.quality, body.output_format, trim)
     )
@@ -1629,7 +1630,8 @@ async def download(body: DownloadBody):
     requested_name = (body.download_name or "").strip() or source_title
     jobs[job_id] = {"id": job_id, "status": "running", "progress": 0, "message": "কাজ শুরু হচ্ছে…",
                     "created_at": time.time(), "output_file": None,
-                    "title": source_title, "filename": safe_download_filename(requested_name, body.output_format)}
+                    "title": source_title, "filename": safe_download_filename(requested_name, body.output_format),
+                    "interface": "website", "kind": "video", "format": body.output_format}
     jobs[job_id]["task"] = asyncio.create_task(
         process_download(job_id, url, body.quality, body.output_format, trim)
     )
@@ -1648,11 +1650,43 @@ async def download_images(body: ImageDownloadBody):
         "id": job_id, "status": "running", "progress": 0,
         "message": "Starting image extraction…", "created_at": time.time(),
         "output_file": None, "title": requested_name, "filename": None,
+        "interface": "website", "kind": "image", "format": "zip-or-image",
     }
     jobs[job_id]["task"] = asyncio.create_task(
         process_image_download(job_id, url, requested_name)
     )
     return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/jobs", dependencies=[Depends(require_session)])
+async def list_jobs():
+    """List recent shared jobs for both the website and Telegram interfaces."""
+    clean_expired_jobs()
+    items = []
+    for job_id, job in sorted(
+        jobs.items(), key=lambda pair: pair[1].get("created_at", 0), reverse=True
+    )[:30]:
+        status = str(job.get("status") or "unknown")
+        items.append({
+            "id": job_id,
+            "title": str(job.get("title") or job.get("filename") or "MediaNest job")[:160],
+            "status": status,
+            "progress": int(job.get("progress") or 0),
+            "message": str(job.get("message") or "")[:260],
+            "filename": job.get("filename"),
+            "created_at": job.get("created_at"),
+            "interface": job.get("interface", "system"),
+            "kind": job.get("kind", "media"),
+            "format": job.get("format"),
+            "download_url": f"/api/jobs/{job_id}/file" if status == "completed" and job.get("output_file") else None,
+            "can_cancel": status == "running",
+        })
+    return {
+        "jobs": items,
+        "running": any(item["status"] == "running" for item in items),
+        "limit": MAX_JOBS,
+        "history_ttl_seconds": JOB_TTL,
+    }
 
 
 @app.get("/api/jobs/{job_id}", dependencies=[Depends(require_session)])
@@ -1662,8 +1696,10 @@ async def job_status(job_id: str):
     if not job:
         raise HTTPException(404, "এই কাজের মেয়াদ শেষ হয়েছে অথবা এটি পাওয়া যায়নি।")
     return {"id": job_id, "status": job["status"], "progress": job["progress"], "message": job["message"],
-            "filename": job.get("filename"),
-            "download_url": f"/api/jobs/{job_id}/file" if job["status"] == "completed" else None}
+            "title": job.get("title"), "filename": job.get("filename"),
+            "created_at": job.get("created_at"), "interface": job.get("interface", "system"),
+            "kind": job.get("kind", "media"),
+            "download_url": f"/api/jobs/{job_id}/file" if job["status"] == "completed" and job.get("output_file") else None}
 
 
 
