@@ -76,6 +76,32 @@ def test_job_error_classifier_returns_actionable_codes():
     }) is None
 
 
+def test_telegram_hosted_and_local_api_file_limits_are_bounded():
+    from telegram_bot import _telegram_file_limits
+
+    hosted_upload, hosted_download = _telegram_file_limits(
+        "https://api.telegram.org", upload_mb="1900", download_mb="1900"
+    )
+    assert hosted_upload == 47 * 1024 * 1024
+    assert hosted_download == 20 * 1024 * 1024
+
+    local_upload, local_download = _telegram_file_limits(
+        "http://localhost:8081", upload_mb="1900", download_mb="650"
+    )
+    assert local_upload == 1900 * 1024 * 1024
+    assert local_download == 650 * 1024 * 1024
+
+    # Invalid values fall back to safe defaults and cannot exceed local limits.
+    default_upload, default_download = _telegram_file_limits("http://bot-api.internal")
+    assert default_upload == 400 * 1024 * 1024
+    assert default_download == 400 * 1024 * 1024
+    capped_upload, capped_download = _telegram_file_limits(
+        "http://localhost:8081", upload_mb="9999", download_mb="-3"
+    )
+    assert capped_upload == 1900 * 1024 * 1024
+    assert capped_download == 1 * 1024 * 1024
+
+
 def test_telegram_trim_range_validation():
     from telegram_bot import _parse_trim_range
 
@@ -188,7 +214,7 @@ def test_telegram_converter_downloads_and_inspects_a_small_upload(tmp_path, monk
 
         def stream(self, method, url):
             assert method == "GET"
-            assert "/file/bot" in url
+            assert url.startswith(telegram_bot.TELEGRAM_API_BASE_URL + "/file/bot")
             return FakeResponse()
 
     async def fake_probe(path):
