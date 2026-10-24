@@ -58,6 +58,8 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
    - \`TELEGRAM_ALLOWED_USER_IDS\` = তোমার numeric Telegram user ID
    - \`TELEGRAM_WEBHOOK_SECRET\` = ধাপ ৩-এর random secret
    - \`TELEGRAM_WEBHOOK_URL\` = \`https://medianest.reelsbytanjim.com/telegram/webhook\` (custom domain চালু থাকলে); না হলে Render service-এর HTTPS URL-এর শেষে \`/telegram/webhook\` যোগ করো।
+   - TELEGRAM_API_BASE_URL সাধারণত সেট করার দরকার নেই; default https://api.telegram.org। Self-hosted Local Bot API deploy করলে তবেই custom URL দেবে.
+   - TELEGRAM_UPLOAD_LIMIT_MB ও TELEGRAM_DOWNLOAD_LIMIT_MB optional। Hosted API হলে code নিরাপদে 47 MB upload ও 20 MB download cap enforce করে; Local Bot API হলে default 400 MB এবং config অনুযায়ী সর্বোচ্চ 1900 MB পর্যন্ত যেতে পারে.
 3. **Save, Build & Deploy** করো। এই চারটি variable পূরণ না থাকলে bot ইচ্ছাকৃতভাবে disabled থাকবে।
 
 ### ধাপ ৫ — পরীক্ষা করো
@@ -65,7 +67,7 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 2. **Video Download** বেছে একটি public video link পাঠাও। Bot-এর দেওয়া quality/format বেছে নাও।
 3. **Image Download** বেছে একটি public post/image link পরীক্ষা করো।
 4. **My Jobs / Status** ও **Cancel Job**-ও পরীক্ষা করো।
-5. 47 MiB-এর চেয়ে বড় output Telegram-এ ফাইল হিসেবে পাঠানো যাবে না; bot ১৫ মিনিট মেয়াদি temporary link দেওয়ার চেষ্টা করবে। Render restart হলে চলমান job বা in-memory link হারিয়ে যেতে পারে।
+5. Hosted Bot API-তে 47 MiB-এর চেয়ে বড় output attachment হিসেবে পাঠানো যাবে না; bot ১৫ মিনিট মেয়াদি temporary link দেবে। Optional Local Bot API setup করলে configured limit পর্যন্ত বড় file chat-এ পাঠানো সম্ভব। Render restart হলে চলমান job বা in-memory link হারিয়ে যেতে পারে।
 
 ### কী কী এখনো বাকি
 কোড GitHub-এ push করা থাকলেও live deployment ও Telegram end-to-end test না হওয়া পর্যন্ত bot-কে fully working ধরা যাবে না। Bot private chat এবং allowlisted user ID-তেই কাজ করে; private/login-required content বা platform access control bypass করে না।
@@ -76,7 +78,7 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 - Website-এ login করার পর **Jobs** tab খুললে website এবং Telegram থেকে শুরু করা সাম্প্রতিক job একসঙ্গে দেখতে পারবে।
 - চলমান job-এর progress ও status দেখা যায়; website থেকে Cancel করা যায়, আর completed job-এর temporary file পাওয়া গেলে Download করা যায়।
 - Telegram-এ **My Jobs / Status** থেকে website-এর সাম্প্রতিক job-ও দেখতে পারবে। Allowlisted bot user running website job cancel করতে এবং completed result Telegram-এ পাঠাতে পারবে।
-- Multi-image source থেকে একাধিক ছবি পাওয়া গেলে backend ZIP তৈরি করে। Bot progress update পাঠায়; Telegram-এ 47 MiB পর্যন্ত ফাইল সরাসরি পাঠানোর চেষ্টা করে, বড় হলে ১৫ মিনিট মেয়াদি secure download link দেয়।
+- Multi-image source থেকে একাধিক ছবি পাওয়া গেলে backend ZIP তৈরি করে। Bot progress update পাঠায়; hosted Telegram API-তে 47 MiB পর্যন্ত ফাইল সরাসরি পাঠানোর চেষ্টা করে, বড় হলে ১৫ মিনিট মেয়াদি secure download link দেয়। Local Bot API mode configured থাকলে limit বাড়ানো যায়.
 - Job history এখনো RAM-এ থাকে, প্রায় ৩০ মিনিটে মুছে যায় এবং Render restart হলে হারিয়ে যায়। Permanent job history বা persistent cloud file storage Phase B-র অংশ নয়; সেটা পরের পর্যায়ের কাজ।
 
 
@@ -90,6 +92,18 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 5. Output format ও quality বেছে নাও। Bot progress দেখাবে এবং কাজ শেষে file পাঠানোর চেষ্টা করবে; বড় output হলে temporary link দিতে পারে।
 
 **Telegram file limit:** সাধারণ hosted Bot API দিয়ে bot সর্বোচ্চ ২০ MB পর্যন্ত incoming file download করতে পারে। এর বেশি হলে website-এর Converter ব্যবহার করো; website upload limit বর্তমানে ৯০ MB। Telegram file limits: https://core.telegram.org/bots/faq
+
+## Optional — বড় ফাইল Telegram chat-এ পাঠানো
+
+সাধারণ Telegram Bot API ব্যবহার করলে 20 MB-এর বেশি incoming video bot download করতে পারে না এবং output attachment-এর সীমা 50 MB। এই সীমা ছাড়াতে আলাদা self-hosted Telegram Local Bot API Server deploy করতে হবে; শুধু Render environment variable বদলালে হবে না.
+
+1. Local Bot API server আলাদা host-এ deploy করে সেটিকে HTTPS reverse proxy দিয়ে নিরাপদে expose করো.
+2. Bot-কে local server-এ switch করার আগে Telegram-এর official API endpoint-এ logOut method চালাতে হবে; token URL chat বা public log-এ share করবে না.
+3. Render-এর Environment-এ TELEGRAM_API_BASE_URL = Local Bot API endpoint দাও.
+4. প্রয়োজনে TELEGRAM_UPLOAD_LIMIT_MB এবং TELEGRAM_DOWNLOAD_LIMIT_MB দাও। Default 400 MB; app-ও default-এ 400 MB processing limit-এ আছে.
+5. Redeploy করে 20 MB-এর বেশি incoming file এবং 47 MB-এর বেশি outgoing result বাস্তব bot-এ পরীক্ষা করো.
+
+Local Bot API-তে Telegram সর্বোচ্চ 2000 MB upload support করে; MediaNest code safety margin হিসেবে 1900 MB hard cap রাখে। Render Free-তে CPU/RAM/time সীমার কারণে বড় ভিডিও processing সফল হবে—এমন নিশ্চয়তা নেই.
 
 ## Phase C — Error reporting
 
