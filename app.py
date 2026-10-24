@@ -1658,6 +1658,30 @@ async def download_images(body: ImageDownloadBody):
     return {"job_id": job_id, "status": "running"}
 
 
+def classify_job_error(job: dict) -> dict | None:
+    """Map internal failure text to a safe, actionable user-facing code and hint."""
+    if not isinstance(job, dict) or job.get("status") != "failed":
+        return None
+    raw = str(job.get("message") or "").lower()
+    if "15-minute" in raw or "timeout" in raw or "timed out" in raw or "সময়সীমা" in raw:
+        return {"error_code": "PROCESSING_TIMEOUT",
+                "recovery_hint": "ছোট ভিডিও বা কম resolution দিয়ে আবার চেষ্টা করো।"}
+    if "20 mb" in raw or "size limit" in raw or "exceed" in raw or "সীমা" in raw or "mb" in raw:
+        return {"error_code": "FILE_SIZE_LIMIT",
+                "recovery_hint": "ছোট ফাইল বা কম resolution ব্যবহার করো।"}
+    if any(term in raw for term in ("private", "login required", "sign in", "bot verification", "http 403", "blocked")):
+        return {"error_code": "SOURCE_ACCESS_RESTRICTED",
+                "recovery_hint": "অনুমতিপ্রাপ্ত public link ব্যবহার করো; login বা access restriction bypass করা হয় না।"}
+    if any(term in raw for term in ("audio track", "ffmpeg", "conversion", "convert", "output file")):
+        return {"error_code": "CONVERSION_FAILED",
+                "recovery_hint": "Supported video file দিয়ে আবার চেষ্টা করো; প্রয়োজন হলে MP4 output বেছে নাও।"}
+    if any(term in raw for term in ("image", "thumbnail", "downloadable media", "public, downloadable")):
+        return {"error_code": "MEDIA_NOT_FOUND",
+                "recovery_hint": "Public post বা direct media URL পরীক্ষা করো; কিছু link downloader সমর্থন করে না।"}
+    return {"error_code": "PROCESSING_FAILED",
+            "recovery_hint": "কিছুক্ষণ পরে আবার চেষ্টা করো। একই সমস্যা হলে job-এর error message support-এর জন্য রাখো।"}
+
+
 @app.get("/api/jobs", dependencies=[Depends(require_session)])
 async def list_jobs():
     """List recent shared jobs for both the website and Telegram interfaces."""
@@ -1678,6 +1702,8 @@ async def list_jobs():
             "interface": job.get("interface", "system"),
             "kind": job.get("kind", "media"),
             "format": job.get("format"),
+            "error_code": (classify_job_error(job) or {}).get("error_code"),
+            "recovery_hint": (classify_job_error(job) or {}).get("recovery_hint"),
             "download_url": f"/api/jobs/{job_id}/file" if status == "completed" and job.get("output_file") else None,
             "can_cancel": status == "running",
         })
@@ -1699,6 +1725,8 @@ async def job_status(job_id: str):
             "title": job.get("title"), "filename": job.get("filename"),
             "created_at": job.get("created_at"), "interface": job.get("interface", "system"),
             "kind": job.get("kind", "media"),
+            "error_code": (classify_job_error(job) or {}).get("error_code"),
+            "recovery_hint": (classify_job_error(job) or {}).get("recovery_hint"),
             "download_url": f"/api/jobs/{job_id}/file" if job["status"] == "completed" and job.get("output_file") else None}
 
 
@@ -1822,7 +1850,12 @@ async def _clipnest_optional_ytdlp_smoke_test():
 # Phase A Telegram interface: reuse the same in-process MediaNest job engine.
 configure_telegram({
     "jobs": jobs,
+    "uploads": uploads,
     "TEMP_ROOT": TEMP_ROOT,
+    "probe_local_video": probe_local_video,
+    "duration_text": duration_text,
+    "process_local_conversion": process_local_conversion,
+    "classify_job_error": classify_job_error,
     "normalize_source_url": normalize_source_url,
     "normalize_image_source_url": normalize_image_source_url,
     "get_video_info": lambda url: info(URLBody(url=url)),
