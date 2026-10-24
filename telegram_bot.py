@@ -159,7 +159,21 @@ def _main_menu() -> dict:
         [{"text": "🎞 Convert a video", "callback_data": "mode:convert"}],
         [{"text": "📊 My Jobs / Status", "callback_data": "action:status"},
          {"text": "⛔ Cancel Job", "callback_data": "action:cancel"}],
+        [{"text": "📦 File limits & help", "callback_data": "action:limits"}],
     ]}
+
+
+def _limits_text() -> str:
+    incoming_mb = TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024)
+    outgoing_mb = TELEGRAM_UPLOAD_LIMIT / (1024 * 1024)
+    return (
+        "📦 MediaNest File Limits\n"
+        f"Incoming video for Convert: up to {incoming_mb:.0f} MB\n"
+        f"File sent directly to this chat: up to {outgoing_mb:.0f} MB\n\n"
+        "✅ Direct Telegram attachment chat-এ থাকবে; পরে একই message থেকে আবার download করতে পারবে।\n"
+        "🔗 Limit-এর চেয়ে বড় output হলে temporary link দেওয়া হবে, যা ১৫ মিনিট থাকবে।\n"
+        "বড় incoming video Telegram থেকে আনা না গেলে website Converter ব্যবহার করো।"
+    )
 
 
 def _mode_menu() -> dict:
@@ -716,6 +730,9 @@ async def _handle_callback(callback: dict) -> None:
     if data == "action:status":
         await _show_status(chat_id, user_id)
         return
+    if data == "action:limits":
+        await _send_message(chat_id, _limits_text(), _main_menu())
+        return
     if data == "action:cancel":
         keyboard = _cancel_keyboard(user_id)
         await _send_message(chat_id, "যে running job বাতিল করতে চাও সেটি বেছে নাও।" if keyboard else
@@ -811,7 +828,7 @@ async def _handle_message(message: dict) -> None:
     command = text.split()[0].split("@")[0].lower()
     if command in ("/start", "/help"):
         await _send_message(chat_id,
-            "👋 MediaNest Bot-এ স্বাগতম!\n\nVideo বা Image বেছে public link পাঠাও, অথবা Convert a video চেপে নিজের ছোট video file পাঠাও। MP4 quality, MP3, trim, status ও cancel ব্যবহার করা যাবে।\nPrivate/login-required content সমর্থিত নয়।",
+            "👋 MediaNest Bot-এ স্বাগতম!\n\nVideo বা Image বেছে public link পাঠাও, অথবা Convert a video চেপে নিজের ছোট video file পাঠাও। MP4 quality, MP3, trim, status ও cancel ব্যবহার করা যাবে।\n\n✅ Bot-এর file Telegram attachment হিসেবে এলে chat-এ থাকবে; পরে ওই message থেকে আবার download করতে পারবে। বড় file link হিসেবে এলে সেটি temporary।\nPrivate/login-required content সমর্থিত নয়।",
             _main_menu())
         return
     if command == "/video":
@@ -825,6 +842,9 @@ async def _handle_message(message: dict) -> None:
     if command == "/convert":
         _user_modes[user_id] = "convert"
         await _send_message(chat_id, f"🎞 Convert করতে MP4/MOV/MKV/WebM ভিডিও file পাঠাও (সর্বোচ্চ {TELEGRAM_DOWNLOAD_LIMIT / (1024 * 1024):.0f} MB)।", _main_menu())
+        return
+    if command == "/limits":
+        await _send_message(chat_id, _limits_text(), _main_menu())
         return
     if command == "/status":
         await _show_status(chat_id, user_id)
