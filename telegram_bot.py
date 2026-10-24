@@ -27,7 +27,7 @@ ALLOWED_USER_IDS = {
     item.strip() for item in os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
     if item.strip().isdigit()
 }
-TELEGRAM_UPLOAD_LIMIT = 49 * 1024 * 1024
+TELEGRAM_UPLOAD_LIMIT = 47 * 1024 * 1024
 LINK_TTL_SECONDS = 15 * 60
 SESSION_TTL_SECONDS = 15 * 60
 
@@ -39,6 +39,14 @@ _video_sessions: dict[str, dict] = {}
 _job_owners: dict[str, str] = {}
 _download_links: dict[str, dict] = {}
 _monitor_tasks: dict[str, asyncio.Task] = {}
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 def configure_telegram(services: dict) -> None:
@@ -431,7 +439,7 @@ async def _handle_callback(callback: dict) -> None:
         _user_modes[user_id] = mode
         pending = _pending_urls.pop(user_id, None)
         if pending:
-            asyncio.create_task(_process_url(chat_id, user_id, pending, mode))
+            _spawn(_process_url(chat_id, user_id, pending, mode))
         else:
             label = "ভিডিও" if mode == "video" else "ইমেজ"
             await _send_message(chat_id, f"{label} download-এর public URL পাঠাও।", _main_menu())
@@ -505,7 +513,7 @@ async def _handle_message(message: dict) -> None:
     raw_url = match.group(0).rstrip(".,);]")
     mode = _user_modes.pop(user_id, None)
     if mode:
-        asyncio.create_task(_process_url(chat_id, user_id, raw_url, mode))
+        _spawn(_process_url(chat_id, user_id, raw_url, mode))
     else:
         _pending_urls[user_id] = raw_url
         await _send_message(chat_id, "লিংক পেয়েছি। কী download করতে চাও?", _mode_menu())
@@ -533,7 +541,7 @@ async def telegram_webhook(request: Request):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid update")
     # Return quickly to Telegram; downloads and metadata checks run as background tasks.
-    asyncio.create_task(_handle_update(update))
+    _spawn(_handle_update(update))
     return {"ok": True}
 
 
