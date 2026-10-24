@@ -509,6 +509,7 @@ async def _monitor_job(chat_id, user_id: str, job_id: str, message_id) -> None:
             if not job:
                 await _send_message(chat_id, "এই job-এর তথ্য পাওয়া যাচ্ছে না। /start দিয়ে আবার শুরু করো。", _main_menu())
                 return
+            _remember_job(user_id, job_id, job)
             status = job.get("status")
             progress = int(job.get("progress") or 0)
             message = str(job.get("message") or "Processing…")[:160]
@@ -535,14 +536,16 @@ async def _monitor_job(chat_id, user_id: str, job_id: str, message_id) -> None:
                             if size <= TELEGRAM_UPLOAD_LIMIT:
                                 result = await _send_document(chat_id, resolved, job.get("filename") or resolved.name)
                                 if result.get("ok"):
-                                    await _send_message(chat_id, "✅ ফাইল পাঠানো হয়েছে।", _main_menu())
+                                    _remember_job(user_id, job_id, job, delivery="sent_to_chat")
+                                    await _send_message(chat_id, "✅ ফাইল Telegram chat-এ পাঠানো হয়েছে। মূল attachment message-টি chat-এ থাকবে।", _main_menu())
                                     _services["clean_after_download"](job_id)
                                     return
                             link = _create_download_link(job_id, user_id)
                             if link:
+                                _remember_job(user_id, job_id, job, delivery="temporary_link")
                                 await _send_message(
                                     chat_id,
-                                    f"✅ ফাইল প্রস্তুত ({size / (1024 * 1024):.1f} MB)। Telegram-এর file upload limit-এর কারণে direct download link দিলাম; link ১৫ মিনিট থাকবে, সর্বোচ্চ ৩ বার ব্যবহার করা যাবে।\n{link}",
+                                    f"✅ ফাইল প্রস্তুত ({size / (1024 * 1024):.1f} MB)। Telegram-এর direct attachment limit-এর কারণে temporary link দিলাম; link ১৫ মিনিট থাকবে, সর্বোচ্চ ৩ বার ব্যবহার করা যাবে।\n{link}",
                                     _main_menu(),
                                 )
                                 return
@@ -608,7 +611,16 @@ def _mark_download_link_used(token: str) -> None:
 async def _send_shared_job(chat_id, user_id: str, job_id: str) -> None:
     job = _services.get("jobs", {}).get(job_id)
     if not job or job.get("status") != "completed" or not job.get("output_file"):
-        await _send_message(chat_id, "এই job-এর output আর পাওয়া যাচ্ছে না।", _main_menu())
+        record = next((item for item in _job_history.get(str(user_id), [])
+                       if item.get("job_id") == job_id), None)
+        if record and record.get("delivery") == "sent_to_chat":
+            await _send_message(
+                chat_id,
+                "এই ফাইলটি আগে Telegram attachment হিসেবে পাঠানো হয়েছিল। আবার ডাউনলোড করতে chat-এ মূল file message-টি খুঁজে নাও।",
+                _main_menu(),
+            )
+        else:
+            await _send_message(chat_id, "এই job-এর temporary output আর পাওয়া যাচ্ছে না। নতুন করে download করতে হবে।", _main_menu())
         return
     path = Path(job["output_file"])
     try:
@@ -623,13 +635,15 @@ async def _send_shared_job(chat_id, user_id: str, job_id: str) -> None:
     if size <= TELEGRAM_UPLOAD_LIMIT:
         result = await _send_document(chat_id, resolved, job.get("filename") or resolved.name)
         if result.get("ok"):
-            # Keep website-generated results available in the website after Telegram shares them.
+            _remember_job(user_id, job_id, job, delivery="sent_to_chat")
+            # The Telegram attachment remains in chat; clean the temporary server copy.
             if job.get("interface") == "telegram":
                 _services["clean_after_download"](job_id)
-            await _send_message(chat_id, "✅ ফাইল Telegram-এ পাঠানো হয়েছে।", _main_menu())
+            await _send_message(chat_id, "✅ ফাইল Telegram chat-এ পাঠানো হয়েছে।", _main_menu())
             return
     link = _create_download_link(job_id, user_id)
     if link:
+        _remember_job(user_id, job_id, job, delivery="temporary_link")
         await _send_message(
             chat_id,
             f"ফাইলের size {size / (1024 * 1024):.1f} MB অথবা Telegram upload ব্যর্থ হয়েছে। "
