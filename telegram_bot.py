@@ -667,11 +667,15 @@ async def _handle_callback(callback: dict) -> None:
         await _send_message(chat_id, "যে running job বাতিল করতে চাও সেটি বেছে নাও।" if keyboard else
                             "তোমার কোনো running job নেই।", keyboard or _main_menu())
         return
-    if data in ("mode:video", "mode:image"):
+    if data in ("mode:video", "mode:image", "mode:convert"):
         mode = data.split(":", 1)[1]
         _user_modes[user_id] = mode
+        if mode == "convert":
+            _pending_urls.pop(user_id, None)
+            await _send_message(chat_id, "🎞 Convert করতে MP4/MOV/MKV/WebM ভিডিও file পাঠাও। Telegram Bot API-তে upload থেকে download limit 20 MB।", _main_menu())
+            return
         pending = _pending_urls.pop(user_id, None)
-        if pending:
+        if pending and mode in ("video", "image"):
             _spawn(_process_url(chat_id, user_id, pending, mode))
         else:
             label = "ভিডিও" if mode == "video" else "ইমেজ"
@@ -682,6 +686,24 @@ async def _handle_callback(callback: dict) -> None:
         if len(pieces) == 4:
             _, token, output_format, quality = pieces
             await _start_video_download(chat_id, user_id, token, output_format, quality)
+        return
+    if data.startswith("trimask:"):
+        token = data.split(":", 1)[1]
+        session = _converter_sessions.get(token)
+        if not session or session.get("owner") != user_id:
+            await _send_message(chat_id, "এই converter session পাওয়া যাচ্ছে না। আবার ভিডিও পাঠাও।", _main_menu())
+            return
+        if (session.get("duration") or 0) < 600:
+            await _send_message(chat_id, "Trim করতে ভিডিওর duration কমপক্ষে ১০ মিনিট হতে হবে।", _main_menu())
+            return
+        _trim_waiting[user_id] = token
+        await _send_message(chat_id, "Trim range seconds-এ পাঠাও: start,end\nউদাহরণ: 15,45\nEnd অবশ্যই ভিডিওর duration-এর মধ্যে হতে হবে।")
+        return
+    if data.startswith("convert:"):
+        pieces = data.split(":")
+        if len(pieces) == 4:
+            _, token, output_format, quality = pieces
+            await _start_uploaded_conversion(chat_id, user_id, token, output_format, quality)
         return
     if data.startswith("send:"):
         job_id = data.split(":", 1)[1]
@@ -719,8 +741,17 @@ async def _handle_message(message: dict) -> None:
         return
 
     text = str(message.get("text") or "").strip()
+    media = message.get("video") or message.get("document")
+    if media:
+        mode = _user_modes.pop(user_id, None)
+        if mode != "convert":
+            await _send_message(chat_id, "ভিডিও file convert করতে menu থেকে *Convert a video* বেছে নাও, তারপর file পাঠাও।", _main_menu())
+            return
+        _spawn(_receive_telegram_video(chat_id, user_id, message, media))
+        return
+
     if not text:
-        await _send_message(chat_id, "একটি public URL পাঠাও অথবা menu থেকে Video/Image বেছে নাও।", _main_menu())
+        await _send_message(chat_id, "একটি public URL পাঠাও অথবা menu থেকে Video/Image/Converter বেছে নাও।", _main_menu())
         return
 
     command = text.split()[0].split("@")[0].lower()
@@ -737,6 +768,10 @@ async def _handle_message(message: dict) -> None:
         _user_modes[user_id] = "image"
         await _send_message(chat_id, "🖼 ছবির public post বা direct image URL পাঠাও।", _main_menu())
         return
+    if command == "/convert":
+        _user_modes[user_id] = "convert"
+        await _send_message(chat_id, "🎞 Convert করতে MP4/MOV/MKV/WebM ভিডিও file পাঠাও (সর্বোচ্চ 20 MB)।", _main_menu())
+        return
     if command == "/status":
         await _show_status(chat_id, user_id)
         return
@@ -744,6 +779,19 @@ async def _handle_message(message: dict) -> None:
         keyboard = _cancel_keyboard(user_id)
         await _send_message(chat_id, "বাতিল করার job বেছে নাও।" if keyboard else "তোমার কোনো running job নেই।",
                             keyboard or _main_menu())
+        return
+
+    pending_trim_token = _trim_waiting.get(user_id)
+    if pending_trim_token:
+        session = _converter_sessions.get(pending_trim_token)
+        parsed_trim = _parse_trim_range(text, (session or {}).get("duration")) if session else None
+        if not parsed_trim:
+            await _send_message(chat_id, "Trim range সঠিক নয়। seconds-এ start,end দাও, যেমন 15,45; duration-এর বাইরে দেওয়া যাবে না।")
+            return
+        session["trim"] = parsed_trim
+        _trim_waiting.pop(user_id, None)
+        await _send_message(chat_id, f"✅ Trim set: {parsed_trim[0]:g}s–{parsed_trim[1]:g}s. এখন output format/quality বেছে নাও।",
+                            _conversion_keyboard(pending_trim_token, session))
         return
 
     match = re.search(r"https?://[^\s<>]+", text)
