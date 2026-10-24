@@ -70,6 +70,16 @@ Telegram bot চালুর আগে GitHub-এর নতুন version Render
 ### কী কী এখনো বাকি
 কোড GitHub-এ push করা থাকলেও live deployment ও Telegram end-to-end test না হওয়া পর্যন্ত bot-কে fully working ধরা যাবে না। Bot private chat এবং allowlisted user ID-তেই কাজ করে; private/login-required content বা platform access control bypass করে না।
 
+
+## Phase B — Website ও Telegram-এর Shared Job Management
+
+- Website-এ login করার পর **Jobs** tab খুললে website এবং Telegram থেকে শুরু করা সাম্প্রতিক job একসঙ্গে দেখতে পারবে।
+- চলমান job-এর progress ও status দেখা যায়; website থেকে Cancel করা যায়, আর completed job-এর temporary file পাওয়া গেলে Download করা যায়।
+- Telegram-এ **My Jobs / Status** থেকে website-এর সাম্প্রতিক job-ও দেখতে পারবে। Allowlisted bot user running website job cancel করতে এবং completed result Telegram-এ পাঠাতে পারবে।
+- Multi-image source থেকে একাধিক ছবি পাওয়া গেলে backend ZIP তৈরি করে। Bot progress update পাঠায়; Telegram-এ 47 MiB পর্যন্ত ফাইল সরাসরি পাঠানোর চেষ্টা করে, বড় হলে ১৫ মিনিট মেয়াদি secure download link দেয়।
+- Job history এখনো RAM-এ থাকে, প্রায় ৩০ মিনিটে মুছে যায় এবং Render restart হলে হারিয়ে যায়। Permanent job history বা persistent cloud file storage Phase B-র অংশ নয়; সেটা পরের পর্যায়ের কাজ।
+
+
 ## Security
 
 - App publicly reachable, কিন্তু access code ছাড়া API ব্যবহার করা যাবে না।
